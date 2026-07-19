@@ -2,8 +2,12 @@
 set -euo pipefail
 
 HELPER="/usr/local/libexec/magsafe-led-helper"
-RESET_PID="${TMPDIR:-/tmp}/magsafe-dark-${UID}-reset.pid"
+STATE_DIR="${TMPDIR:-/tmp}/magsafe-dark-${UID}"
+RESET_PID="$STATE_DIR/reset.pid"
+TEMP_STATE="$STATE_DIR/temporary.state"
 DEFAULTS_DOMAIN="su.xyz.MagSafeDark"
+
+mkdir -p "$STATE_DIR"
 
 read_default() {
   /usr/bin/defaults read "$DEFAULTS_DOMAIN" "$1" 2>/dev/null || true
@@ -36,15 +40,17 @@ Direct LED modes:
 
 Timers:
   for <seconds> <mode>     Set a mode temporarily, then restore system mode
+  timer-status             Print remaining timer seconds, or nothing
+  cancel-timer             Cancel timer and restore system mode
+  temporary-active         Exit 0 while a timer or automation state is active
 
 Command runner:
   run [--working MODE] [--success MODE] [--error MODE] [--delay SEC] -- COMMAND...
-
-Examples:
-  magsafe-dark for 900 off
-  magsafe-dark run -- make test
-  magsafe-dark run --working blink-slow -- npm run build
 EOF
+}
+
+clear_state() {
+  rm -f "$TEMP_STATE"
 }
 
 cancel_reset() {
@@ -54,18 +60,38 @@ cancel_reset() {
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     rm -f "$RESET_PID"
   fi
+  clear_state
 }
 
 set_mode() { sudo -n "$HELPER" "$1" >/dev/null; }
 
+write_state() {
+  local kind="$1" end="$2" mode="$3"
+  printf '%s\t%s\t%s\n' "$kind" "$end" "$mode" > "$TEMP_STATE"
+}
+
 schedule_system() {
-  local seconds="$1"
+  local seconds="$1" kind="${2:-automation}" mode="${3:-system}"
+  local end=$(( $(date +%s) + seconds ))
+  write_state "$kind" "$end" "$mode"
   (
     sleep "$seconds"
     sudo -n "$HELPER" system >/dev/null 2>&1 || true
-    rm -f "$RESET_PID"
+    rm -f "$RESET_PID" "$TEMP_STATE"
   ) >/dev/null 2>&1 &
   echo $! > "$RESET_PID"
+}
+
+state_is_active() {
+  [[ -f "$TEMP_STATE" ]] || return 1
+  local kind end mode now
+  IFS=$'\t' read -r kind end mode < "$TEMP_STATE" || return 1
+  now=$(date +%s)
+  if [[ "$end" == "0" || "$end" -gt "$now" ]]; then
+    return 0
+  fi
+  rm -f "$TEMP_STATE" "$RESET_PID"
+  return 1
 }
 
 notify() {
@@ -100,18 +126,19 @@ run_command() {
 
   cancel_reset
   set_mode "$working"
+  write_state automation 0 "$working"
   set +e
   "$@"
   local code=$?
   set -e
   if (( code == 0 )); then
     set_mode "$success"
-    notify "Команда завершена" "Успешно"
+    notify "Command completed" "Success"
   else
     set_mode "$failure"
-    notify "Команда завершена" "Ошибка, код $code"
+    notify "Command completed" "Error, code $code"
   fi
-  schedule_system "$delay"
+  schedule_system "$delay" automation "${code}:${success}:${failure}"
   return "$code"
 }
 
@@ -122,18 +149,55 @@ run_command() {
 
 command="${1:-}"
 case "$command" in
-  working) cancel_reset; set_mode orange ;;
-  success) cancel_reset; set_mode green; notify "Codex" "Задача завершена"; schedule_system "$SUCCESS_SECONDS" ;;
-  error) cancel_reset; set_mode orange; notify "Codex" "Задача завершилась с ошибкой"; schedule_system "$ERROR_SECONDS" ;;
-  idle|system) cancel_reset; set_mode system ;;
-  off|green|orange|flash|blink-slow|blink-fast|blink-off) cancel_reset; set_mode "$command" ;;
-  status) sudo -n "$HELPER" status ;;
+  working)
+    cancel_reset; set_mode orange; write_state automation 0 orange
+    ;;
+  success)
+    cancel_reset; set_mode green; notify "Codex" "Task completed"; schedule_system "$SUCCESS_SECONDS" automation green
+    ;;
+  error)
+    cancel_reset; set_mode orange; notify "Codex" "Task failed"; schedule_system "$ERROR_SECONDS" automation orange
+    ;;
+  idle|system)
+    cancel_reset; set_mode system
+    ;;
+  off|green|orange|flash|blink-slow|blink-fast|blink-off)
+    cancel_reset; set_mode "$command"
+    ;;
+  status)
+    sudo -n "$HELPER" status
+    ;;
   for)
     seconds="${2:-}"; mode="${3:-}"
     [[ "$seconds" == <-> ]] || { print -u2 "Seconds must be an integer"; exit 64; }
     valid_mode "$mode" || { print -u2 "Unknown mode: $mode"; exit 64; }
-    cancel_reset; set_mode "$mode"; schedule_system "$seconds" ;;
-  run) run_command "$@" ;;
+    cancel_reset; set_mode "$mode"; schedule_system "$seconds" timer "$mode"
+    ;;
+  timer-status)
+    if state_is_active; then
+      IFS=$'\t' read -r kind end mode < "$TEMP_STATE"
+      if [[ "$kind" == "timer" ]]; then
+        now=$(date +%s)
+        remaining=$(( end - now ))
+        (( remaining < 0 )) && remaining=0
+        print "$remaining"
+      fi
+    fi
+    ;;
+  temporary-active)
+    state_is_active
+    ;;
+  cancel-timer)
+    if state_is_active; then
+      IFS=$'\t' read -r kind end mode < "$TEMP_STATE"
+      [[ "$kind" == "timer" ]] || exit 0
+    fi
+    cancel_reset
+    set_mode system
+    ;;
+  run)
+    run_command "$@"
+    ;;
   -h|--help|help|"") usage ;;
   *) print -u2 "Unknown command: $command"; usage >&2; exit 64 ;;
 esac
