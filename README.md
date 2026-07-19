@@ -7,15 +7,18 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 
 ## Features
 
-- Disable the MagSafe LED.
-- Restore normal system-controlled behavior.
-- Dynamic menu action based on the current LED state.
-- Dynamic menu bar icon that follows the actual SMC LED mode.
-- Optional monochrome icon or colored bulb indication.
-- Force green or orange LED modes.
-- Automation states for builds, scripts and AI coding agents.
-- Codex CLI wrapper with working, success and error indication.
-- No repeated password prompts after installation.
+- Turn the MagSafe LED off or restore normal system control.
+- Force green or orange indication.
+- Use single-flash, slow-blink, fast-blink and blink-then-off effects.
+- Start automatically at login.
+- Optionally restore the last selected LED mode after launch.
+- Temporarily apply a mode using menu timers or the CLI.
+- Show the current raw LED mode and Mac compatibility diagnostics.
+- Use menu keyboard shortcuts for common actions.
+- Configure Codex completion duration and notifications.
+- Wrap any shell command with working, success and error LED states.
+- Check the latest GitHub Release from the application menu.
+- Build and publish unsigned installer packages automatically with GitHub Actions.
 
 ## Compatibility
 
@@ -26,11 +29,9 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 
 ## Install from GitHub Releases
 
-Download the latest installer from the [Releases page](https://github.com/bulava92/magsafe-dark/releases/latest):
+Download the latest installer from the [Releases page](https://github.com/bulava92/magsafe-dark/releases/latest) and open the `.pkg` file.
 
-- `MagSafeDark-1.1.0-unsigned.pkg`
-
-Open the downloaded package and follow the installer steps. It installs:
+The package installs:
 
 - `/Applications/MagSafe Dark.app`
 - `/usr/local/libexec/magsafe-led-helper`
@@ -38,25 +39,9 @@ Open the downloaded package and follow the installer steps. It installs:
 - `/usr/local/bin/codex-led`
 - `/etc/sudoers.d/magsafe-dark`
 
-The current package is unsigned. macOS may block it because it is not signed and notarized with an Apple Developer ID certificate.
-
-When that happens:
-
-1. Try to open the package once.
-2. Open **System Settings → Privacy & Security**.
-3. Click **Open Anyway** for MagSafe Dark.
-
-Only install packages published in this repository's Releases section.
+The current package is unsigned. If macOS blocks it, try opening it once and then use **System Settings → Privacy & Security → Open Anyway**.
 
 ## Install from source
-
-Install Xcode Command Line Tools if needed:
-
-```bash
-xcode-select --install
-```
-
-Then clone and install:
 
 ```bash
 git clone https://github.com/bulava92/magsafe-dark.git
@@ -65,13 +50,17 @@ chmod +x build.sh install.sh uninstall.sh
 ./install.sh
 ```
 
-The installer requests an administrator password once and installs the same components as the package.
+Install Xcode Command Line Tools first when required:
+
+```bash
+xcode-select --install
+```
 
 ## Update
 
-For a package installation, download and open the newer `.pkg` from [GitHub Releases](https://github.com/bulava92/magsafe-dark/releases/latest). It replaces the existing application and command-line components.
+Package installation: download and open the newer `.pkg` from GitHub Releases.
 
-For a source installation:
+Source installation:
 
 ```bash
 cd ~/Projects/magsafe-dark
@@ -79,69 +68,30 @@ git pull
 ./install.sh
 ```
 
-## Build the application
-
-```bash
-zsh ./build.sh
-```
-
-The application is created at:
-
-```text
-build/MagSafe Dark.app
-```
-
-## Build an unsigned installer package
-
-```bash
-zsh ./build-pkg.sh
-```
-
-The default output is:
-
-```text
-build/MagSafeDark-1.1.0-unsigned.pkg
-```
-
-Specify another package version as the first argument:
-
-```bash
-zsh ./build-pkg.sh 1.2.0
-```
-
-Test the package locally:
-
-```bash
-sudo installer \
-  -pkg build/MagSafeDark-1.1.0-unsigned.pkg \
-  -target /
-```
-
-Inspect its payload:
-
-```bash
-pkgutil --payload-files build/MagSafeDark-1.1.0-unsigned.pkg
-```
-
-The generated package is unsigned. For public distribution without Gatekeeper warnings, the application and package must be signed with Apple Developer ID certificates and notarized by Apple.
-
 ## Menu bar controls
 
-The main action changes dynamically:
+The menu displays the current SMC mode and includes:
 
-- LED active: **Turn LED off**
-- LED off: **Restore system mode**
+- Off and system-controlled modes.
+- Green and orange forced colors.
+- Single indication and three blinking effects.
+- Temporary 15-minute and one-hour timers.
+- Launch-at-login control using `SMAppService`.
+- Optional restoration of the last selected mode.
+- Monochrome or LED-colored menu bar icon.
+- Codex duration presets and notification control.
+- Diagnostics and a link to the latest release.
 
-The menu bar icon is refreshed every second, so changes made by `codex-led`, shell scripts or other processes are reflected without reopening the menu.
+Keyboard shortcuts while the menu is open:
 
-The **Icon appearance** submenu provides:
-
-- **Monochrome** — uses the standard macOS template icon and adapts to light or dark menu bars.
-- **Color the bulb using the LED color** — only the bulb is green or orange; its outline and socket remain in the normal system menu bar color.
-
-The selected icon appearance is stored in `UserDefaults` and persists after restarting the app.
+- `⌘⇧0` — toggle off/system mode.
+- `⌘⇧G` — green.
+- `⌘⇧O` — orange.
+- `⌘Q` — quit.
 
 ## Command-line automation
+
+Task states:
 
 ```bash
 magsafe-dark working
@@ -150,24 +100,46 @@ magsafe-dark error
 magsafe-dark idle
 ```
 
-Direct LED commands are also available:
+Direct modes:
 
 ```bash
 magsafe-dark off
 magsafe-dark system
 magsafe-dark green
 magsafe-dark orange
+magsafe-dark flash
+magsafe-dark blink-slow
+magsafe-dark blink-fast
+magsafe-dark blink-off
 magsafe-dark status
 ```
 
-By default, `success` and `error` return to system mode after 5 seconds. Override the delay per command:
+Temporary mode:
+
+```bash
+magsafe-dark for 900 off
+magsafe-dark for 3600 orange
+```
+
+Run any command with automatic LED status handling:
+
+```bash
+magsafe-dark run -- make test
+magsafe-dark run --working blink-slow -- npm run build
+magsafe-dark run --success green --error blink-fast --delay 10 -- ./deploy.sh
+```
+
+The command exit code is preserved. A successful command uses the success mode; a failed command uses the error mode; then system mode is restored after the selected delay.
+
+Environment overrides remain available:
 
 ```bash
 MAGSAFE_DARK_SUCCESS_SECONDS=10 magsafe-dark success
 MAGSAFE_DARK_ERROR_SECONDS=15 magsafe-dark error
+MAGSAFE_DARK_NOTIFICATIONS=0 magsafe-dark success
 ```
 
-Starting a new state cancels a pending automatic reset, so an old `success` timer cannot interrupt a newer `working` state.
+Without environment overrides, the CLI reads duration and notification preferences stored by the menu bar application.
 
 ## Codex CLI
 
@@ -175,84 +147,97 @@ Run Codex through the included wrapper:
 
 ```bash
 codex-led
-```
-
-All Codex arguments are passed through unchanged:
-
-```bash
 codex-led exec "Fix the failing tests"
-codex-led --help
 ```
 
 Behavior:
 
-1. Orange while the Codex process is running.
-2. Green for 5 seconds when Codex exits successfully.
-3. Orange for 5 seconds when Codex exits with an error.
-4. System-controlled mode afterward.
+1. Orange while Codex is running.
+2. Green after successful completion.
+3. Orange after an error.
+4. Optional macOS notification.
+5. System-controlled mode after the configured delay.
 
-The wrapper detects `codex` from `PATH`. A custom executable can be supplied:
+The ChatGPT desktop app and Codex editor extensions do not currently expose a stable task-state interface to this utility. The wrapper therefore targets Codex CLI.
 
-```bash
-CODEX_BIN="$HOME/.local/bin/codex" codex-led
-```
+## Diagnostics
 
-This integration is reliable for Codex CLI. The ChatGPT desktop app and the Codex VS Code extension do not currently expose a stable public task-state interface to this utility, so merely detecting that those applications are open would not reliably indicate whether Codex is actively working.
+The **Diagnostics** menu shows:
 
-## Other integrations
+- Mac model.
+- Whether the privileged helper is installed.
+- Current raw `ACLC` value or the read error.
+- Installed application path.
 
-Any shell command can use the LED as a status indicator:
+## Build
 
-```bash
-magsafe-dark working
-if npm test; then
-  magsafe-dark success
-else
-  magsafe-dark error
-fi
-```
-
-Another compact pattern:
+Build the application:
 
 ```bash
-magsafe-dark working
-make build && magsafe-dark success || magsafe-dark error
+zsh ./build.sh
 ```
 
-This can be used with builds, tests, backups, deployments, SSH jobs and rendering tasks.
+Build an unsigned installer package:
+
+```bash
+zsh ./build-pkg.sh 1.2.0
+```
+
+Output:
+
+```text
+build/MagSafeDark-1.2.0-unsigned.pkg
+```
+
+Test it:
+
+```bash
+sudo installer -pkg build/MagSafeDark-1.2.0-unsigned.pkg -target /
+```
+
+## Automated Releases
+
+Pushing a version tag triggers `.github/workflows/release.yml`:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+The workflow:
+
+1. Builds on a macOS runner.
+2. Creates the unsigned `.pkg`.
+3. Generates a SHA-256 checksum.
+4. Creates release notes.
+5. Attaches the package and checksum to the GitHub Release.
+
+The workflow can also be run manually from the Actions tab without publishing a Release.
+
+## LED modes
+
+| Value | Command | Mode |
+|---:|---|---|
+| `0` | `system` | System controlled |
+| `1` | `off` | Off |
+| `3` | `green` | Green |
+| `4` | `orange` | Orange |
+| `5` | `flash` | Single indication |
+| `6` | `blink-slow` | Slow orange blinking |
+| `7` | `blink-fast` | Fast orange blinking |
+| `19` | `blink-off` | Orange blinking followed by off |
+
+Arbitrary RGB color and brightness control are not known to be supported.
+
+## Security
+
+The helper and application are installed as `root:wheel`. The sudoers rule permits only the explicitly listed helper commands and does not grant unrestricted passwordless sudo access.
 
 ## Uninstall
 
 ```bash
 ./uninstall.sh
 ```
-
-The script removes the application, helper, command-line tools and sudoers rule.
-
-## LED modes
-
-The helper reads and writes the SMC key `ACLC`:
-
-| Value | Mode |
-|---:|---|
-| `0` | System controlled |
-| `1` | Off |
-| `3` | Green |
-| `4` | Orange |
-
-Arbitrary brightness control is not known to be supported.
-
-## Security
-
-The privileged helper is installed at `/usr/local/libexec/magsafe-led-helper`. The sudoers rule permits only these exact commands without a password:
-
-- `off`
-- `system`
-- `green`
-- `orange`
-- `status`
-
-The helper, command wrappers and application are installed as `root:wheel`, preventing modification by a standard user.
 
 ## License
 
