@@ -1,0 +1,28 @@
+#!/bin/zsh
+set -u
+
+MAGSAFE_DARK_BIN="${MAGSAFE_DARK_BIN:-/usr/local/bin/magsafe-dark}"
+CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || true)}"
+
+if [[ -z "$CODEX_BIN" || ! -x "$CODEX_BIN" ]]; then
+  print -u2 "codex executable was not found. Set CODEX_BIN or install Codex CLI."
+  exit 127
+fi
+
+"$MAGSAFE_DARK_BIN" working
+
+cleanup() {
+  local exit_code=$?
+  trap - EXIT INT TERM HUP
+
+  if (( exit_code == 0 )); then
+    "$MAGSAFE_DARK_BIN" success || true
+  else
+    "$MAGSAFE_DARK_BIN" error || true
+  fi
+
+  exit "$exit_code"
+}
+
+trap cleanup EXIT INT TERM HUP
+"$CODEX_BIN" "$@"
