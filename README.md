@@ -24,6 +24,30 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 - Tested on MacBook Pro M5.
 - Reports for other models are welcome.
 
+## Install from GitHub Releases
+
+Download the latest installer from the [Releases page](https://github.com/bulava92/magsafe-dark/releases/latest):
+
+- `MagSafeDark-1.1.0-unsigned.pkg`
+
+Open the downloaded package and follow the installer steps. It installs:
+
+- `/Applications/MagSafe Dark.app`
+- `/usr/local/libexec/magsafe-led-helper`
+- `/usr/local/bin/magsafe-dark`
+- `/usr/local/bin/codex-led`
+- `/etc/sudoers.d/magsafe-dark`
+
+The current package is unsigned. macOS may block it because it is not signed and notarized with an Apple Developer ID certificate.
+
+When that happens:
+
+1. Try to open the package once.
+2. Open **System Settings → Privacy & Security**.
+3. Click **Open Anyway** for MagSafe Dark.
+
+Only install packages published in this repository's Releases section.
+
 ## Install from source
 
 Install Xcode Command Line Tools if needed:
@@ -41,15 +65,13 @@ chmod +x build.sh install.sh uninstall.sh
 ./install.sh
 ```
 
-The installer requests an administrator password once. It installs:
-
-- `/Applications/MagSafe Dark.app`
-- `/usr/local/libexec/magsafe-led-helper`
-- `/usr/local/bin/magsafe-dark`
-- `/usr/local/bin/codex-led`
-- `/etc/sudoers.d/magsafe-dark`
+The installer requests an administrator password once and installs the same components as the package.
 
 ## Update
+
+For a package installation, download and open the newer `.pkg` from [GitHub Releases](https://github.com/bulava92/magsafe-dark/releases/latest). It replaces the existing application and command-line components.
+
+For a source installation:
 
 ```bash
 cd ~/Projects/magsafe-dark
