@@ -12,6 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var refreshTimer: Timer?
     private var isReapplyingMode = false
+    private var menuIsOpen = false
+
+    private weak var currentModeMenuItem: NSMenuItem?
+    private weak var timerCountdownMenuItem: NSMenuItem?
+    private weak var cancelTimerMenuItem: NSMenuItem?
 
     private let iconStyleKey = "statusIconStyle"
     private let rememberedModeKey = "rememberedLEDMode"
@@ -49,18 +54,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refreshStatusNow()
         rebuildMenu()
-        refreshTimer = Timer.scheduledTimer(
+
+        let timer = Timer(
             timeInterval: 1,
             target: self,
             selector: #selector(refreshStatus),
             userInfo: nil,
             repeats: true
         )
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        menuIsOpen = true
         refreshStatusNow()
         rebuildMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
     }
 
     private var language: AppLanguage {
@@ -78,25 +91,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func rebuildMenu() {
+        currentModeMenuItem = nil
+        timerCountdownMenuItem = nil
+        cancelTimerMenuItem = nil
         menu.removeAllItems()
+
         let mode = currentMode()
         let remaining = timerRemaining()
 
         let status = NSMenuItem(
-            title: text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))"),
+            title: currentModeTitle(mode),
             action: nil,
             keyEquivalent: ""
         )
         status.isEnabled = false
+        currentModeMenuItem = status
         menu.addItem(status)
 
         if defaults.bool(forKey: showTimerInMenuKey), let remaining {
             let timerStatus = NSMenuItem(
-                title: text("Осталось по таймеру: \(formatDuration(remaining))", "Timer remaining: \(formatDuration(remaining))"),
+                title: timerRemainingTitle(remaining),
                 action: nil,
                 keyEquivalent: ""
             )
             timerStatus.isEnabled = false
+            timerCountdownMenuItem = timerStatus
             menu.addItem(timerStatus)
         }
 
@@ -126,7 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timers.addItem(timerItem(text("Оранжевая на 15 минут", "Orange for 15 minutes"), seconds: 900, mode: "orange"))
         if remaining != nil {
             timers.addItem(.separator())
-            timers.addItem(item(text("Отменить таймер", "Cancel timer"), #selector(cancelTimer)))
+            let cancel = item(text("Отменить таймер", "Cancel timer"), #selector(cancelTimer))
+            cancelTimerMenuItem = cancel
+            timers.addItem(cancel)
         }
         menu.addItem(submenu(text("Таймер", "Timer"), timers))
 
@@ -276,13 +297,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private func currentModeTitle(_ mode: UInt8?) -> String {
+        text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))")
+    }
+
+    private func timerRemainingTitle(_ seconds: Int) -> String {
+        text("Осталось по таймеру: \(formatDuration(seconds))", "Timer remaining: \(formatDuration(seconds))")
+    }
+
     private func formatDuration(_ seconds: Int) -> String {
         let minutes = seconds / 60
         let remainder = seconds % 60
         return String(format: "%d:%02d", minutes, remainder)
     }
 
-    private func updateStatusIcon(mode: UInt8? = nil) {
+    private func updateStatusIcon(mode: UInt8? = nil, remaining: Int? = nil) {
         let actualMode = mode ?? currentMode()
         let description = "MagSafe LED: \(modeName(actualMode))"
 
@@ -299,11 +328,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.image = image
         }
 
-        if defaults.bool(forKey: showTimerInStatusBarKey), let remaining = timerRemaining() {
-            statusItem.button?.title = "  \(formatDuration(remaining))"
+        let actualRemaining = remaining ?? timerRemaining()
+        if defaults.bool(forKey: showTimerInStatusBarKey), let actualRemaining {
+            statusItem.button?.title = "  \(formatDuration(actualRemaining))"
         } else {
             statusItem.button?.title = ""
         }
+    }
+
+    private func updateOpenMenu(mode: UInt8?, remaining: Int?) {
+        guard menuIsOpen else { return }
+
+        currentModeMenuItem?.title = currentModeTitle(mode)
+
+        if let remaining {
+            timerCountdownMenuItem?.title = timerRemainingTitle(remaining)
+            timerCountdownMenuItem?.isHidden = !defaults.bool(forKey: showTimerInMenuKey)
+            cancelTimerMenuItem?.isHidden = false
+        } else {
+            timerCountdownMenuItem?.isHidden = true
+            cancelTimerMenuItem?.isHidden = true
+        }
+        menu.update()
     }
 
     private func bulbColor(for mode: UInt8?) -> NSColor? {
@@ -327,8 +373,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshStatusNow() {
         var mode = currentMode()
+        let temporaryActive = temporaryStateIsActive()
+
         if !isReapplyingMode,
-           !temporaryStateIsActive(),
+           !temporaryActive,
            let remembered = defaults.string(forKey: rememberedModeKey),
            remembered != "system",
            let expected = expectedValue(for: remembered),
@@ -339,7 +387,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isReapplyingMode = false
             if result.status == 0 { mode = expected }
         }
-        updateStatusIcon(mode: mode)
+
+        let remaining = timerRemaining()
+        updateStatusIcon(mode: mode, remaining: remaining)
+        updateOpenMenu(mode: mode, remaining: remaining)
     }
 
     private var launchAtLoginEnabled: Bool { SMAppService.mainApp.status == .enabled }
