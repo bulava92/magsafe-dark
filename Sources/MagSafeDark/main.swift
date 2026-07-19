@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monochromeItem.state = iconStyle == .monochrome ? .on : .off
         appearance.addItem(monochromeItem)
 
-        let actualColorItem = item("Показывать реальный цвет LED", #selector(useActualColorIcon))
+        let actualColorItem = item("Подсвечивать колбу цветом LED", #selector(useActualColorIcon))
         actualColorItem.state = iconStyle == .actualColor ? .on : .off
         appearance.addItem(actualColorItem)
 
@@ -125,34 +125,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusIcon() {
         let mode = currentMode()
-        let symbolName = mode == 1 ? "lightbulb.slash.fill" : "lightbulb.fill"
         let description = accessibilityDescription(for: mode)
 
-        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description) else {
+        if iconStyle == .actualColor, let bulbColor = bulbColor(for: mode) {
+            guard let image = NSImage(
+                systemSymbolName: "lightbulb.fill",
+                accessibilityDescription: description
+            ) else {
+                statusItem.button?.image = nil
+                return
+            }
+
+            // SF Symbols palette rendering keeps the bulb glass colored while the
+            // outline and socket use the system label color and remain readable in
+            // both light and dark menu bars.
+            let configuration = NSImage.SymbolConfiguration(
+                paletteColors: [bulbColor, .labelColor]
+            )
+            let coloredImage = image.withSymbolConfiguration(configuration) ?? image
+            coloredImage.isTemplate = false
+            statusItem.button?.image = coloredImage
+            return
+        }
+
+        let symbolName = mode == 1 ? "lightbulb.slash" : "lightbulb"
+        guard let image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: description
+        ) else {
             statusItem.button?.image = nil
             return
         }
 
-        if iconStyle == .actualColor {
-            let color: NSColor
-            switch mode {
-            case 3:
-                color = .systemGreen
-            case 4:
-                color = .systemOrange
-            case 1:
-                color = .secondaryLabelColor
-            default:
-                color = .labelColor
-            }
+        image.isTemplate = true
+        statusItem.button?.image = image
+    }
 
-            let configuration = NSImage.SymbolConfiguration(paletteColors: [color])
-            let coloredImage = image.withSymbolConfiguration(configuration) ?? image
-            coloredImage.isTemplate = false
-            statusItem.button?.image = coloredImage
-        } else {
-            image.isTemplate = true
-            statusItem.button?.image = image
+    private func bulbColor(for mode: UInt8?) -> NSColor? {
+        switch mode {
+        case 3:
+            return .systemGreen
+        case 4:
+            return .systemOrange
+        default:
+            return nil
         }
     }
 
