@@ -1,0 +1,93 @@
+#!/bin/zsh
+set -euo pipefail
+
+HELPER="/usr/local/libexec/magsafe-led-helper"
+RESET_PID="${TMPDIR:-/tmp}/magsafe-dark-${UID}-reset.pid"
+SUCCESS_SECONDS="${MAGSAFE_DARK_SUCCESS_SECONDS:-5}"
+ERROR_SECONDS="${MAGSAFE_DARK_ERROR_SECONDS:-5}"
+
+usage() {
+  cat <<'EOF'
+Usage: magsafe-dark <command>
+
+States:
+  working          Orange while a task is running
+  success          Green, then system mode after a delay
+  error            Orange, then system mode after a delay
+  idle             Restore system-controlled mode
+
+Direct LED modes:
+  off              Turn the LED off
+  system           Restore system-controlled mode
+  green            Force green
+  orange           Force orange
+  status           Print the raw ACLC value
+EOF
+}
+
+cancel_reset() {
+  if [[ -f "$RESET_PID" ]]; then
+    local pid
+    pid="$(cat "$RESET_PID" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$RESET_PID"
+  fi
+}
+
+set_mode() {
+  sudo -n "$HELPER" "$1" >/dev/null
+}
+
+schedule_system() {
+  local seconds="$1"
+  (
+    sleep "$seconds"
+    sudo -n "$HELPER" system >/dev/null 2>&1 || true
+    rm -f "$RESET_PID"
+  ) >/dev/null 2>&1 &
+  echo $! > "$RESET_PID"
+}
+
+[[ -x "$HELPER" ]] || {
+  print -u2 "MagSafe Dark helper is not installed. Run ./install.sh first."
+  exit 127
+}
+
+command="${1:-}"
+case "$command" in
+  working)
+    cancel_reset
+    set_mode orange
+    ;;
+  success)
+    cancel_reset
+    set_mode green
+    schedule_system "$SUCCESS_SECONDS"
+    ;;
+  error)
+    cancel_reset
+    set_mode orange
+    schedule_system "$ERROR_SECONDS"
+    ;;
+  idle|system)
+    cancel_reset
+    set_mode system
+    ;;
+  off|green|orange)
+    cancel_reset
+    set_mode "$command"
+    ;;
+  status)
+    sudo -n "$HELPER" status
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    print -u2 "Unknown command: $command"
+    usage >&2
+    exit 64
+    ;;
+esac
