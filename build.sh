@@ -3,8 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-APP_NAME="MagSafeDark"
-APP_DIR="build/${APP_NAME}.app"
+EXECUTABLE_NAME="MagSafeDark"
+APP_DISPLAY_NAME="MagSafe Dark"
+APP_DIR="build/${APP_DISPLAY_NAME}.app"
 ICON_SOURCE="Resources/AppIcon.png"
 ICONSET_DIR="build/AppIcon.iconset"
 ICON_FILE="build/AppIcon.icns"
@@ -29,9 +30,9 @@ fi
 
 swift build -c release
 
-rm -rf "$APP_DIR" "$ICONSET_DIR" "$ICON_FILE"
+rm -rf "$APP_DIR" "$ICONSET_DIR" "$ICON_FILE" "build/MagSafeDark.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$ICONSET_DIR"
-cp ".build/release/$APP_NAME" "$APP_DIR/Contents/MacOS/"
+cp ".build/release/$EXECUTABLE_NAME" "$APP_DIR/Contents/MacOS/"
 
 make_icon() {
   local size="$1"
@@ -63,7 +64,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>MagSafeDark</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.1</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
