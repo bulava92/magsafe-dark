@@ -3,9 +3,18 @@ set -euo pipefail
 
 HELPER="/usr/local/libexec/magsafe-led-helper"
 RESET_PID="${TMPDIR:-/tmp}/magsafe-dark-${UID}-reset.pid"
-SUCCESS_SECONDS="${MAGSAFE_DARK_SUCCESS_SECONDS:-5}"
-ERROR_SECONDS="${MAGSAFE_DARK_ERROR_SECONDS:-5}"
-NOTIFICATIONS="${MAGSAFE_DARK_NOTIFICATIONS:-1}"
+DEFAULTS_DOMAIN="su.xyz.MagSafeDark"
+
+read_default() {
+  /usr/bin/defaults read "$DEFAULTS_DOMAIN" "$1" 2>/dev/null || true
+}
+
+SUCCESS_SECONDS="${MAGSAFE_DARK_SUCCESS_SECONDS:-$(read_default codexSuccessSeconds)}"
+ERROR_SECONDS="${MAGSAFE_DARK_ERROR_SECONDS:-$(read_default codexErrorSeconds)}"
+NOTIFICATIONS="${MAGSAFE_DARK_NOTIFICATIONS:-$(read_default codexNotifications)}"
+SUCCESS_SECONDS="${SUCCESS_SECONDS:-5}"
+ERROR_SECONDS="${ERROR_SECONDS:-5}"
+NOTIFICATIONS="${NOTIFICATIONS:-1}"
 
 usage() {
   cat <<'EOF'
@@ -47,9 +56,7 @@ cancel_reset() {
   fi
 }
 
-set_mode() {
-  sudo -n "$HELPER" "$1" >/dev/null
-}
+set_mode() { sudo -n "$HELPER" "$1" >/dev/null; }
 
 schedule_system() {
   local seconds="$1"
@@ -115,27 +122,18 @@ run_command() {
 
 command="${1:-}"
 case "$command" in
-  working)
-    cancel_reset; set_mode orange ;;
-  success)
-    cancel_reset; set_mode green; notify "Codex" "Задача завершена"; schedule_system "$SUCCESS_SECONDS" ;;
-  error)
-    cancel_reset; set_mode orange; notify "Codex" "Задача завершилась с ошибкой"; schedule_system "$ERROR_SECONDS" ;;
-  idle|system)
-    cancel_reset; set_mode system ;;
-  off|green|orange|flash|blink-slow|blink-fast|blink-off)
-    cancel_reset; set_mode "$command" ;;
-  status)
-    sudo -n "$HELPER" status ;;
+  working) cancel_reset; set_mode orange ;;
+  success) cancel_reset; set_mode green; notify "Codex" "Задача завершена"; schedule_system "$SUCCESS_SECONDS" ;;
+  error) cancel_reset; set_mode orange; notify "Codex" "Задача завершилась с ошибкой"; schedule_system "$ERROR_SECONDS" ;;
+  idle|system) cancel_reset; set_mode system ;;
+  off|green|orange|flash|blink-slow|blink-fast|blink-off) cancel_reset; set_mode "$command" ;;
+  status) sudo -n "$HELPER" status ;;
   for)
     seconds="${2:-}"; mode="${3:-}"
     [[ "$seconds" == <-> ]] || { print -u2 "Seconds must be an integer"; exit 64; }
     valid_mode "$mode" || { print -u2 "Unknown mode: $mode"; exit 64; }
     cancel_reset; set_mode "$mode"; schedule_system "$seconds" ;;
-  run)
-    run_command "$@" ;;
-  -h|--help|help|"")
-    usage ;;
-  *)
-    print -u2 "Unknown command: $command"; usage >&2; exit 64 ;;
+  run) run_command "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) print -u2 "Unknown command: $command"; usage >&2; exit 64 ;;
 esac
