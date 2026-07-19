@@ -10,6 +10,8 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 - Disable the MagSafe LED.
 - Restore normal system-controlled behavior.
 - Dynamic menu action based on the current LED state.
+- Dynamic menu bar icon that follows the actual SMC LED mode.
+- Optional monochrome or real-color menu bar icon.
 - Force green or orange LED modes.
 - Automation states for builds, scripts and AI coding agents.
 - Codex CLI wrapper with working, success and error indication.
@@ -41,7 +43,7 @@ chmod +x build.sh install.sh uninstall.sh
 
 The installer requests an administrator password once. It installs:
 
-- `/Applications/MagSafeDark.app`
+- `/Applications/MagSafe Dark.app`
 - `/usr/local/libexec/magsafe-led-helper`
 - `/usr/local/bin/magsafe-dark`
 - `/usr/local/bin/codex-led`
@@ -61,12 +63,16 @@ The main action changes dynamically:
 - LED active: **Turn LED off**
 - LED off: **Restore system mode**
 
-The **Automation state** submenu provides:
+The menu bar icon is refreshed every second, so changes made by `codex-led`, shell scripts or other processes are reflected without reopening the menu.
 
-- Working — orange
-- Success — green, then system mode
-- Error — orange, then system mode
-- Idle — system mode
+The **Icon appearance** submenu provides:
+
+- **Monochrome** — uses the standard macOS template icon and automatically adapts to light or dark menu bars.
+- **Show actual LED color** — green for SMC mode `3`, orange for mode `4`, gray for off and the normal label color for system mode.
+
+The selected icon appearance is stored in `UserDefaults` and persists after restarting the app.
+
+The automation test submenu was removed from the app menu. Automation remains available through the command-line tools below.
 
 ## Command-line automation
 
