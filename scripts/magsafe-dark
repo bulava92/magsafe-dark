@@ -5,23 +5,36 @@ HELPER="/usr/local/libexec/magsafe-led-helper"
 RESET_PID="${TMPDIR:-/tmp}/magsafe-dark-${UID}-reset.pid"
 SUCCESS_SECONDS="${MAGSAFE_DARK_SUCCESS_SECONDS:-5}"
 ERROR_SECONDS="${MAGSAFE_DARK_ERROR_SECONDS:-5}"
+NOTIFICATIONS="${MAGSAFE_DARK_NOTIFICATIONS:-1}"
 
 usage() {
   cat <<'EOF'
-Usage: magsafe-dark <command>
+Usage: magsafe-dark <command> [arguments]
 
 States:
-  working          Orange while a task is running
-  success          Green, then system mode after a delay
-  error            Orange, then system mode after a delay
-  idle             Restore system-controlled mode
+  working                 Orange while a task is running
+  success                 Green, then system mode after a delay
+  error                   Orange, then system mode after a delay
+  idle                    Restore system-controlled mode
 
 Direct LED modes:
-  off              Turn the LED off
-  system           Restore system-controlled mode
-  green            Force green
-  orange           Force orange
-  status           Print the raw ACLC value
+  off | system | green | orange
+  flash                   Single error indication
+  blink-slow              Slow orange blinking
+  blink-fast              Fast orange blinking
+  blink-off               Blink orange, then switch off
+  status                  Print the raw ACLC value
+
+Timers:
+  for <seconds> <mode>     Set a mode temporarily, then restore system mode
+
+Command runner:
+  run [--working MODE] [--success MODE] [--error MODE] [--delay SEC] -- COMMAND...
+
+Examples:
+  magsafe-dark for 900 off
+  magsafe-dark run -- make test
+  magsafe-dark run --working blink-slow -- npm run build
 EOF
 }
 
@@ -29,9 +42,7 @@ cancel_reset() {
   if [[ -f "$RESET_PID" ]]; then
     local pid
     pid="$(cat "$RESET_PID" 2>/dev/null || true)"
-    if [[ -n "$pid" ]]; then
-      kill "$pid" 2>/dev/null || true
-    fi
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     rm -f "$RESET_PID"
   fi
 }
@@ -50,6 +61,53 @@ schedule_system() {
   echo $! > "$RESET_PID"
 }
 
+notify() {
+  [[ "$NOTIFICATIONS" == "1" ]] || return 0
+  /usr/bin/osascript -e "display notification \"$2\" with title \"MagSafe Dark\" subtitle \"$1\"" >/dev/null 2>&1 || true
+}
+
+valid_mode() {
+  case "$1" in
+    off|system|green|orange|flash|blink-slow|blink-fast|blink-off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_command() {
+  local working="orange" success="green" failure="orange" delay="$SUCCESS_SECONDS"
+  shift
+  while (( $# )); do
+    case "$1" in
+      --working) working="$2"; shift 2 ;;
+      --success) success="$2"; shift 2 ;;
+      --error) failure="$2"; shift 2 ;;
+      --delay) delay="$2"; shift 2 ;;
+      --) shift; break ;;
+      *) print -u2 "Unknown run option: $1"; exit 64 ;;
+    esac
+  done
+  (( $# )) || { print -u2 "Missing command after --"; exit 64; }
+  valid_mode "$working" && valid_mode "$success" && valid_mode "$failure" || {
+    print -u2 "Invalid LED mode for run command"; exit 64
+  }
+
+  cancel_reset
+  set_mode "$working"
+  set +e
+  "$@"
+  local code=$?
+  set -e
+  if (( code == 0 )); then
+    set_mode "$success"
+    notify "Команда завершена" "Успешно"
+  else
+    set_mode "$failure"
+    notify "Команда завершена" "Ошибка, код $code"
+  fi
+  schedule_system "$delay"
+  return "$code"
+}
+
 [[ -x "$HELPER" ]] || {
   print -u2 "MagSafe Dark helper is not installed. Run ./install.sh first."
   exit 127
@@ -58,36 +116,26 @@ schedule_system() {
 command="${1:-}"
 case "$command" in
   working)
-    cancel_reset
-    set_mode orange
-    ;;
+    cancel_reset; set_mode orange ;;
   success)
-    cancel_reset
-    set_mode green
-    schedule_system "$SUCCESS_SECONDS"
-    ;;
+    cancel_reset; set_mode green; notify "Codex" "Задача завершена"; schedule_system "$SUCCESS_SECONDS" ;;
   error)
-    cancel_reset
-    set_mode orange
-    schedule_system "$ERROR_SECONDS"
-    ;;
+    cancel_reset; set_mode orange; notify "Codex" "Задача завершилась с ошибкой"; schedule_system "$ERROR_SECONDS" ;;
   idle|system)
-    cancel_reset
-    set_mode system
-    ;;
-  off|green|orange)
-    cancel_reset
-    set_mode "$command"
-    ;;
+    cancel_reset; set_mode system ;;
+  off|green|orange|flash|blink-slow|blink-fast|blink-off)
+    cancel_reset; set_mode "$command" ;;
   status)
-    sudo -n "$HELPER" status
-    ;;
+    sudo -n "$HELPER" status ;;
+  for)
+    seconds="${2:-}"; mode="${3:-}"
+    [[ "$seconds" == <-> ]] || { print -u2 "Seconds must be an integer"; exit 64; }
+    valid_mode "$mode" || { print -u2 "Unknown mode: $mode"; exit 64; }
+    cancel_reset; set_mode "$mode"; schedule_system "$seconds" ;;
+  run)
+    run_command "$@" ;;
   -h|--help|help|"")
-    usage
-    ;;
+    usage ;;
   *)
-    print -u2 "Unknown command: $command"
-    usage >&2
-    exit 64
-    ;;
+    print -u2 "Unknown command: $command"; usage >&2; exit 64 ;;
 esac
