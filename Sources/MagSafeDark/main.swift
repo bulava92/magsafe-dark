@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let helper = "/usr/local/libexec/magsafe-led-helper"
+    private let automationCLI = "/usr/local/bin/magsafe-dark"
     private let menu = NSMenu()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -11,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             systemSymbolName: "lightbulb.slash",
             accessibilityDescription: "MagSafe Dark"
         )
-
         menu.delegate = self
         statusItem.menu = menu
         rebuildMenu()
@@ -30,10 +30,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Выключить лампочку", #selector(turnOff)))
         }
 
+        let automation = NSMenu()
+        automation.addItem(item("Работа — оранжевый", #selector(working)))
+        automation.addItem(item("Успех — зелёный", #selector(success)))
+        automation.addItem(item("Ошибка — оранжевый", #selector(failure)))
+        automation.addItem(item("Ожидание — штатный режим", #selector(idle)))
+        let automationItem = NSMenuItem(title: "Состояние автоматизации", action: nil, keyEquivalent: "")
+        automationItem.submenu = automation
+        menu.addItem(automationItem)
+
         let colors = NSMenu()
         colors.addItem(item("Зелёная", #selector(green)))
         colors.addItem(item("Оранжевая", #selector(orange)))
-
         let colorsItem = NSMenuItem(title: "Принудительный цвет", action: nil, keyEquivalent: "")
         colorsItem.submenu = colors
         menu.addItem(colorsItem)
@@ -48,29 +56,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private func runHelper(_ arguments: [String]) -> (status: Int32, output: String) {
-        guard FileManager.default.isExecutableFile(atPath: helper) else {
-            return (127, "Helper не установлен. Запустите install.sh.")
+    private func run(_ executable: String, _ arguments: [String]) -> (status: Int32, output: String) {
+        guard FileManager.default.isExecutableFile(atPath: executable) else {
+            return (127, "Команда не установлена. Запустите install.sh.")
         }
-
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["-n", helper] + arguments
-
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = arguments
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
-
         do {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return (task.terminationStatus, output)
         } catch {
             return (126, error.localizedDescription)
         }
+    }
+
+    private func runHelper(_ arguments: [String]) -> (status: Int32, output: String) {
+        run("/usr/bin/sudo", ["-n", helper] + arguments)
     }
 
     private func currentMode() -> UInt8? {
@@ -79,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return UInt8(result.output)
     }
 
-    private func setLED(_ mode: String) {
-        let result = runHelper([mode])
+    private func execute(_ executable: String, _ arguments: [String]) {
+        let result = run(executable, arguments)
         guard result.status == 0 else {
             alert("Не удалось изменить LED", result.output.isEmpty ? "Неизвестная ошибка" : result.output)
             return
@@ -95,10 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.runModal()
     }
 
-    @objc private func turnOff() { setLED("off") }
-    @objc private func systemMode() { setLED("system") }
-    @objc private func green() { setLED("green") }
-    @objc private func orange() { setLED("orange") }
+    @objc private func turnOff() { execute("/usr/bin/sudo", ["-n", helper, "off"]) }
+    @objc private func systemMode() { execute("/usr/bin/sudo", ["-n", helper, "system"]) }
+    @objc private func green() { execute("/usr/bin/sudo", ["-n", helper, "green"]) }
+    @objc private func orange() { execute("/usr/bin/sudo", ["-n", helper, "orange"]) }
+    @objc private func working() { execute(automationCLI, ["working"]) }
+    @objc private func success() { execute(automationCLI, ["success"]) }
+    @objc private func failure() { execute(automationCLI, ["error"]) }
+    @objc private func idle() { execute(automationCLI, ["idle"]) }
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
