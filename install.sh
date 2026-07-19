@@ -4,6 +4,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ./build.sh
 
+APP_PATH="/Applications/MagSafe Dark.app"
+OLD_APP_PATH="/Applications/MagSafeDark.app"
+BUILD_APP_PATH="build/MagSafe Dark.app"
+
 sudo install -d -m 755 /usr/local/libexec /usr/local/bin
 sudo install -o root -g wheel -m 755 \
   .build/release/magsafe-led-helper \
@@ -23,9 +27,9 @@ sudo visudo -cf /etc/sudoers.d/magsafe-dark
 pkill -x MagSafeDark 2>/dev/null || true
 sleep 0.3
 
-sudo rm -rf /Applications/MagSafeDark.app
-sudo ditto build/MagSafeDark.app /Applications/MagSafeDark.app
-sudo chown -R root:wheel /Applications/MagSafeDark.app
+sudo rm -rf "$APP_PATH" "$OLD_APP_PATH"
+sudo ditto "$BUILD_APP_PATH" "$APP_PATH"
+sudo chown -R root:wheel "$APP_PATH"
 
-open /Applications/MagSafeDark.app
-printf '\nInstalled. Commands: magsafe-dark, codex-led.\n'
+open "$APP_PATH"
+printf '\nInstalled as "MagSafe Dark". Commands: magsafe-dark, codex-led.\n'
