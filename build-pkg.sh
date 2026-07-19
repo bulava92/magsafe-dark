@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VERSION="${1:-1.1.0}"
+VERSION="${1:-1.2.1}"
 APP_NAME="MagSafe Dark"
 APP_PATH="build/${APP_NAME}.app"
 PKG_ROOT="build/pkg-root"
