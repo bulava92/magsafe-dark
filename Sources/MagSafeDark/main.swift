@@ -3,6 +3,7 @@ import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum IconStyle: String { case monochrome, actualColor }
+    private enum AppLanguage: String { case ru, en }
 
     private let helper = "/usr/local/libexec/magsafe-led-helper"
     private let automationCLI = "/usr/local/bin/magsafe-dark"
@@ -10,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var statusItem: NSStatusItem!
     private var refreshTimer: Timer?
+    private var isReapplyingMode = false
 
     private let iconStyleKey = "statusIconStyle"
     private let rememberedModeKey = "rememberedLEDMode"
@@ -17,25 +19,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let successSecondsKey = "codexSuccessSeconds"
     private let errorSecondsKey = "codexErrorSeconds"
     private let notificationsKey = "codexNotifications"
+    private let languageKey = "appLanguage"
+    private let showTimerInStatusBarKey = "showTimerInStatusBar"
+    private let showTimerInMenuKey = "showTimerInMenu"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        menu.delegate = self
-        statusItem.menu = menu
+        if defaults.object(forKey: languageKey) == nil {
+            let systemLanguage: AppLanguage = Locale.preferredLanguages.first?.lowercased().hasPrefix("ru") == true ? .ru : .en
+            defaults.set(systemLanguage.rawValue, forKey: languageKey)
+        }
 
         defaults.register(defaults: [
             restoreModeKey: false,
             successSecondsKey: 5,
             errorSecondsKey: 5,
-            notificationsKey: true
+            notificationsKey: true,
+            showTimerInStatusBarKey: false,
+            showTimerInMenuKey: false
         ])
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        menu.delegate = self
+        statusItem.menu = menu
 
         if defaults.bool(forKey: restoreModeKey),
            let mode = defaults.string(forKey: rememberedModeKey) {
             _ = run(automationCLI, [mode])
         }
 
-        updateStatusIcon()
+        refreshStatusNow()
         rebuildMenu()
         refreshTimer = Timer.scheduledTimer(
             timeInterval: 1,
@@ -47,88 +59,129 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        updateStatusIcon()
+        refreshStatusNow()
         rebuildMenu()
     }
 
+    private var language: AppLanguage {
+        get { AppLanguage(rawValue: defaults.string(forKey: languageKey) ?? "en") ?? .en }
+        set { defaults.set(newValue.rawValue, forKey: languageKey) }
+    }
+
+    private func text(_ ru: String, _ en: String) -> String {
+        language == .ru ? ru : en
+    }
+
     private var iconStyle: IconStyle {
-        get {
-            guard let raw = defaults.string(forKey: iconStyleKey), let value = IconStyle(rawValue: raw) else {
-                return .monochrome
-            }
-            return value
-        }
+        get { IconStyle(rawValue: defaults.string(forKey: iconStyleKey) ?? "") ?? .monochrome }
         set { defaults.set(newValue.rawValue, forKey: iconStyleKey) }
     }
 
     private func rebuildMenu() {
         menu.removeAllItems()
         let mode = currentMode()
+        let remaining = timerRemaining()
 
-        let status = NSMenuItem(title: "Текущий режим: \(modeName(mode))", action: nil, keyEquivalent: "")
+        let status = NSMenuItem(
+            title: text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))"),
+            action: nil,
+            keyEquivalent: ""
+        )
         status.isEnabled = false
         menu.addItem(status)
+
+        if defaults.bool(forKey: showTimerInMenuKey), let remaining {
+            let timerStatus = NSMenuItem(
+                title: text("Осталось по таймеру: \(formatDuration(remaining))", "Timer remaining: \(formatDuration(remaining))"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            timerStatus.isEnabled = false
+            menu.addItem(timerStatus)
+        }
+
         menu.addItem(.separator())
 
         let toggle = mode == 1
-            ? item("Вернуть штатный режим", #selector(systemMode), key: "0")
-            : item("Выключить лампочку", #selector(turnOff), key: "0")
+            ? item(text("Вернуть штатный режим", "Restore system mode"), #selector(systemMode), key: "0")
+            : item(text("Выключить лампочку", "Turn LED off"), #selector(turnOff), key: "0")
         toggle.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(toggle)
 
         let colors = NSMenu()
-        colors.addItem(modeItem("Зелёная", mode: "green", key: "g"))
-        colors.addItem(modeItem("Оранжевая", mode: "orange", key: "o"))
-        menu.addItem(submenu("Принудительный цвет", colors))
+        colors.addItem(modeItem(text("Зелёная", "Green"), mode: "green", key: "g"))
+        colors.addItem(modeItem(text("Оранжевая", "Orange"), mode: "orange", key: "o"))
+        menu.addItem(submenu(text("Принудительный цвет", "Force color"), colors))
 
         let effects = NSMenu()
-        effects.addItem(modeItem("Одиночная индикация", mode: "flash"))
-        effects.addItem(modeItem("Медленное мигание", mode: "blink-slow"))
-        effects.addItem(modeItem("Быстрое мигание", mode: "blink-fast"))
-        effects.addItem(modeItem("Мигание с выключением", mode: "blink-off"))
-        menu.addItem(submenu("Эффекты", effects))
+        effects.addItem(modeItem(text("Одиночная индикация", "Single indication"), mode: "flash"))
+        effects.addItem(modeItem(text("Медленное мигание", "Slow blinking"), mode: "blink-slow"))
+        effects.addItem(modeItem(text("Быстрое мигание", "Fast blinking"), mode: "blink-fast"))
+        effects.addItem(modeItem(text("Мигание с выключением", "Blink, then turn off"), mode: "blink-off"))
+        menu.addItem(submenu(text("Эффекты", "Effects"), effects))
 
         let timers = NSMenu()
-        timers.addItem(timerItem("Выключить на 15 минут", seconds: 900, mode: "off"))
-        timers.addItem(timerItem("Выключить на 1 час", seconds: 3600, mode: "off"))
-        timers.addItem(timerItem("Оранжевая на 15 минут", seconds: 900, mode: "orange"))
-        timers.addItem(timerItem("Отменить таймер", seconds: 0, mode: "system"))
-        menu.addItem(submenu("Таймер", timers))
+        timers.addItem(timerItem(text("Выключить на 15 минут", "Turn off for 15 minutes"), seconds: 900, mode: "off"))
+        timers.addItem(timerItem(text("Выключить на 1 час", "Turn off for 1 hour"), seconds: 3600, mode: "off"))
+        timers.addItem(timerItem(text("Оранжевая на 15 минут", "Orange for 15 minutes"), seconds: 900, mode: "orange"))
+        if remaining != nil {
+            timers.addItem(.separator())
+            timers.addItem(item(text("Отменить таймер", "Cancel timer"), #selector(cancelTimer)))
+        }
+        menu.addItem(submenu(text("Таймер", "Timer"), timers))
 
         let settings = NSMenu()
-        let login = item("Запускать при входе", #selector(toggleLaunchAtLogin))
+        let login = item(text("Запускать при входе", "Launch at login"), #selector(toggleLaunchAtLogin))
         login.state = launchAtLoginEnabled ? .on : .off
         settings.addItem(login)
 
-        let restore = item("Восстанавливать выбранный режим", #selector(toggleRestoreMode))
+        let restore = item(text("Восстанавливать выбранный режим при запуске", "Restore selected mode at launch"), #selector(toggleRestoreMode))
         restore.state = defaults.bool(forKey: restoreModeKey) ? .on : .off
         settings.addItem(restore)
         settings.addItem(.separator())
 
         let appearance = NSMenu()
-        let monochrome = item("Чёрно-белый", #selector(useMonochromeIcon))
+        let monochrome = item(text("Чёрно-белый", "Monochrome"), #selector(useMonochromeIcon))
         monochrome.state = iconStyle == .monochrome ? .on : .off
         appearance.addItem(monochrome)
-        let colored = item("Подсвечивать колбу цветом LED", #selector(useActualColorIcon))
+        let colored = item(text("Подсвечивать колбу цветом LED", "Color the bulb using the LED color"), #selector(useActualColorIcon))
         colored.state = iconStyle == .actualColor ? .on : .off
         appearance.addItem(colored)
-        settings.addItem(submenu("Вид значка", appearance))
+        settings.addItem(submenu(text("Вид значка", "Icon appearance"), appearance))
+
+        let timerDisplay = NSMenu()
+        let statusBarTimer = item(text("Показывать рядом с лампочкой", "Show next to the bulb"), #selector(toggleTimerInStatusBar))
+        statusBarTimer.state = defaults.bool(forKey: showTimerInStatusBarKey) ? .on : .off
+        timerDisplay.addItem(statusBarTimer)
+        let menuTimer = item(text("Показывать под текущим режимом", "Show below the current mode"), #selector(toggleTimerInMenu))
+        menuTimer.state = defaults.bool(forKey: showTimerInMenuKey) ? .on : .off
+        timerDisplay.addItem(menuTimer)
+        settings.addItem(submenu(text("Остаток таймера", "Timer countdown"), timerDisplay))
 
         let codex = NSMenu()
-        codex.addItem(durationItem("5 секунд", seconds: 5))
-        codex.addItem(durationItem("10 секунд", seconds: 10))
-        codex.addItem(durationItem("30 секунд", seconds: 30))
-        let notify = item("Уведомления", #selector(toggleNotifications))
+        codex.addItem(durationItem(text("5 секунд", "5 seconds"), seconds: 5))
+        codex.addItem(durationItem(text("10 секунд", "10 seconds"), seconds: 10))
+        codex.addItem(durationItem(text("30 секунд", "30 seconds"), seconds: 30))
+        let notify = item(text("Уведомления", "Notifications"), #selector(toggleNotifications))
         notify.state = defaults.bool(forKey: notificationsKey) ? .on : .off
         codex.addItem(.separator())
         codex.addItem(notify)
-        settings.addItem(submenu("Codex-индикация", codex))
-        menu.addItem(submenu("Настройки", settings))
+        settings.addItem(submenu(text("Codex-индикация", "Codex indication"), codex))
 
+        let languages = NSMenu()
+        let russian = item("Русский", #selector(useRussian))
+        russian.state = language == .ru ? .on : .off
+        languages.addItem(russian)
+        let english = item("English", #selector(useEnglish))
+        english.state = language == .en ? .on : .off
+        languages.addItem(english)
+        settings.addItem(submenu(text("Язык", "Language"), languages))
+
+        menu.addItem(submenu(text("Настройки", "Settings"), settings))
         menu.addItem(.separator())
-        menu.addItem(item("Диагностика…", #selector(showDiagnostics)))
-        menu.addItem(item("Проверить обновления…", #selector(checkUpdates)))
-        menu.addItem(item("Выход", #selector(quit), key: "q"))
+        menu.addItem(item(text("Диагностика…", "Diagnostics…"), #selector(showDiagnostics)))
+        menu.addItem(item(text("Проверить обновления…", "Check for updates…"), #selector(checkUpdates)))
+        menu.addItem(item(text("Выход", "Quit"), #selector(quit), key: "q"))
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
@@ -166,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func run(_ executable: String, _ arguments: [String]) -> (status: Int32, output: String) {
         guard FileManager.default.isExecutableFile(atPath: executable) else {
-            return (127, "Команда не установлена. Запустите install.sh.")
+            return (127, text("Команда не установлена. Запустите install.sh.", "Command is not installed. Run install.sh."))
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: executable)
@@ -195,36 +248,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return UInt8(result.output)
     }
 
+    private func timerRemaining() -> Int? {
+        let result = run(automationCLI, ["timer-status"])
+        guard result.status == 0, !result.output.isEmpty, let value = Int(result.output), value > 0 else { return nil }
+        return value
+    }
+
+    private func temporaryStateIsActive() -> Bool {
+        run(automationCLI, ["temporary-active"]).status == 0
+    }
+
+    private func expectedValue(for mode: String) -> UInt8? {
+        ["system": 0, "off": 1, "green": 3, "orange": 4, "flash": 5, "blink-slow": 6, "blink-fast": 7, "blink-off": 19][mode]
+    }
+
     private func modeName(_ mode: UInt8?) -> String {
         switch mode {
-        case 0: return "штатный"
-        case 1: return "выключен"
-        case 3: return "зелёный"
-        case 4: return "оранжевый"
-        case 5: return "одиночная индикация"
-        case 6: return "медленное мигание"
-        case 7: return "быстрое мигание"
-        case 19: return "мигание с выключением"
-        default: return "неизвестен"
+        case 0: return text("штатный", "system controlled")
+        case 1: return text("выключен", "off")
+        case 3: return text("зелёный", "green")
+        case 4: return text("оранжевый", "orange")
+        case 5: return text("одиночная индикация", "single indication")
+        case 6: return text("медленное мигание", "slow blinking")
+        case 7: return text("быстрое мигание", "fast blinking")
+        case 19: return text("мигание с выключением", "blink, then off")
+        default: return text("неизвестен", "unknown")
         }
     }
 
-    private func updateStatusIcon() {
-        let mode = currentMode()
-        let description = "MagSafe LED: \(modeName(mode))"
-        if iconStyle == .actualColor, let color = bulbColor(for: mode),
+    private func formatDuration(_ seconds: Int) -> String {
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        return String(format: "%d:%02d", minutes, remainder)
+    }
+
+    private func updateStatusIcon(mode: UInt8? = nil) {
+        let actualMode = mode ?? currentMode()
+        let description = "MagSafe LED: \(modeName(actualMode))"
+
+        if iconStyle == .actualColor, let color = bulbColor(for: actualMode),
            let image = NSImage(systemSymbolName: "lightbulb.fill", accessibilityDescription: description) {
             let config = NSImage.SymbolConfiguration(paletteColors: [color, .labelColor])
             let colored = image.withSymbolConfiguration(config) ?? image
             colored.isTemplate = false
             statusItem.button?.image = colored
-            return
+        } else {
+            let symbol = actualMode == 1 ? "lightbulb.slash" : (actualMode == 6 || actualMode == 7 || actualMode == 19 ? "lightbulb.2" : "lightbulb")
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+            image?.isTemplate = true
+            statusItem.button?.image = image
         }
 
-        let symbol = mode == 1 ? "lightbulb.slash" : (mode == 6 || mode == 7 || mode == 19 ? "lightbulb.2" : "lightbulb")
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        if defaults.bool(forKey: showTimerInStatusBarKey), let remaining = timerRemaining() {
+            statusItem.button?.title = "  \(formatDuration(remaining))"
+        } else {
+            statusItem.button?.title = ""
+        }
     }
 
     private func bulbColor(for mode: UInt8?) -> NSColor? {
@@ -238,12 +317,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func executeState(_ state: String, remember: Bool = true) {
         let result = run(automationCLI, [state])
         guard result.status == 0 else {
-            alert("Не удалось изменить LED", result.output.isEmpty ? "Неизвестная ошибка" : result.output)
+            alert(text("Не удалось изменить LED", "Could not change the LED"), result.output.isEmpty ? text("Неизвестная ошибка", "Unknown error") : result.output)
             return
         }
         if remember { defaults.set(state, forKey: rememberedModeKey) }
-        updateStatusIcon()
+        refreshStatusNow()
         rebuildMenu()
+    }
+
+    private func refreshStatusNow() {
+        var mode = currentMode()
+        if !isReapplyingMode,
+           !temporaryStateIsActive(),
+           let remembered = defaults.string(forKey: rememberedModeKey),
+           remembered != "system",
+           let expected = expectedValue(for: remembered),
+           let actual = mode,
+           actual != expected {
+            isReapplyingMode = true
+            let result = run(automationCLI, [remembered])
+            isReapplyingMode = false
+            if result.status == 0 { mode = expected }
+        }
+        updateStatusIcon(mode: mode)
     }
 
     private var launchAtLoginEnabled: Bool { SMAppService.mainApp.status == .enabled }
@@ -255,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.runModal()
     }
 
-    @objc private func refreshStatus() { updateStatusIcon() }
+    @objc private func refreshStatus() { refreshStatusNow() }
     @objc private func turnOff() { executeState("off") }
     @objc private func systemMode() { executeState("system") }
 
@@ -268,13 +364,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let data = sender.representedObject as? [String: Any],
               let seconds = data["seconds"] as? Int,
               let mode = data["mode"] as? String else { return }
-        if seconds == 0 {
-            executeState("system", remember: false)
-        } else {
-            let result = run(automationCLI, ["for", String(seconds), mode])
-            if result.status != 0 { alert("Не удалось запустить таймер", result.output) }
-            updateStatusIcon()
+        let result = run(automationCLI, ["for", String(seconds), mode])
+        if result.status != 0 {
+            alert(text("Не удалось запустить таймер", "Could not start the timer"), result.output)
+            return
         }
+        defaults.set("system", forKey: rememberedModeKey)
+        refreshStatusNow()
+        rebuildMenu()
+    }
+
+    @objc private func cancelTimer() {
+        let result = run(automationCLI, ["cancel-timer"])
+        if result.status != 0 {
+            alert(text("Не удалось отменить таймер", "Could not cancel the timer"), result.output)
+            return
+        }
+        defaults.set("system", forKey: rememberedModeKey)
+        refreshStatusNow()
+        rebuildMenu()
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -282,13 +390,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if launchAtLoginEnabled { try SMAppService.mainApp.unregister() }
             else { try SMAppService.mainApp.register() }
         } catch {
-            alert("Не удалось изменить автозапуск", error.localizedDescription)
+            alert(text("Не удалось изменить автозапуск", "Could not change launch-at-login settings"), error.localizedDescription)
         }
         rebuildMenu()
     }
 
     @objc private func toggleRestoreMode() {
         defaults.set(!defaults.bool(forKey: restoreModeKey), forKey: restoreModeKey)
+        rebuildMenu()
+    }
+
+    @objc private func toggleTimerInStatusBar() {
+        defaults.set(!defaults.bool(forKey: showTimerInStatusBarKey), forKey: showTimerInStatusBarKey)
+        refreshStatusNow(); rebuildMenu()
+    }
+
+    @objc private func toggleTimerInMenu() {
+        defaults.set(!defaults.bool(forKey: showTimerInMenuKey), forKey: showTimerInMenuKey)
         rebuildMenu()
     }
 
@@ -306,20 +424,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func useMonochromeIcon() {
         iconStyle = .monochrome
-        updateStatusIcon(); rebuildMenu()
+        refreshStatusNow(); rebuildMenu()
     }
 
     @objc private func useActualColorIcon() {
         iconStyle = .actualColor
-        updateStatusIcon(); rebuildMenu()
+        refreshStatusNow(); rebuildMenu()
+    }
+
+    @objc private func useRussian() {
+        language = .ru
+        refreshStatusNow(); rebuildMenu()
+    }
+
+    @objc private func useEnglish() {
+        language = .en
+        refreshStatusNow(); rebuildMenu()
     }
 
     @objc private func showDiagnostics() {
         let model = run("/usr/sbin/sysctl", ["-n", "hw.model"]).output
         let helperExists = FileManager.default.isExecutableFile(atPath: helper)
         let status = runHelper(["status"])
-        let text = "Модель: \(model.isEmpty ? "неизвестна" : model)\nHelper: \(helperExists ? "установлен" : "не найден")\nACLC: \(status.status == 0 ? status.output : "ошибка — \(status.output)")\nПриложение: \(Bundle.main.bundlePath)"
-        alert("Диагностика MagSafe Dark", text)
+        let textValue = text(
+            "Модель: \(model.isEmpty ? "неизвестна" : model)\nHelper: \(helperExists ? "установлен" : "не найден")\nACLC: \(status.status == 0 ? status.output : "ошибка — \(status.output)")\nПриложение: \(Bundle.main.bundlePath)",
+            "Model: \(model.isEmpty ? "unknown" : model)\nHelper: \(helperExists ? "installed" : "not found")\nACLC: \(status.status == 0 ? status.output : "error — \(status.output)")\nApplication: \(Bundle.main.bundlePath)"
+        )
+        alert(text("Диагностика MagSafe Dark", "MagSafe Dark diagnostics"), textValue)
     }
 
     @objc private func checkUpdates() {
