@@ -1,7 +1,16 @@
 import Foundation
 import SMCHelper
 
-let values: [String: UInt8] = ["system": 0, "off": 1, "green": 3, "orange": 4]
+let values: [String: UInt8] = [
+    "system": 0,
+    "off": 1,
+    "green": 3,
+    "orange": 4,
+    "flash": 5,
+    "blink-slow": 6,
+    "blink-fast": 7,
+    "blink-off": 19
+]
 let args = CommandLine.arguments
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -20,7 +29,7 @@ if args.count == 2, args[1] == "status" {
 }
 
 guard args.count == 2, let value = values[args[1]] else {
-    fail("Usage: magsafe-led-helper off|system|green|orange|status", code: 64)
+    fail("Usage: magsafe-led-helper off|system|green|orange|flash|blink-slow|blink-fast|blink-off|status", code: 64)
 }
 let result = smc_write_u8("ACLC", value)
 guard result == 0 else { fail("Unable to write ACLC (IOKit error \(result)).") }
