@@ -87,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return UInt8(result.output)
     }
 
-    private func execute(_ executable: String, _ arguments: [String]) {
-        let result = run(executable, arguments)
+    private func executeState(_ state: String) {
+        let result = run(automationCLI, [state])
         guard result.status == 0 else {
             alert("Не удалось изменить LED", result.output.isEmpty ? "Неизвестная ошибка" : result.output)
             return
@@ -103,14 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.runModal()
     }
 
-    @objc private func turnOff() { execute("/usr/bin/sudo", ["-n", helper, "off"]) }
-    @objc private func systemMode() { execute("/usr/bin/sudo", ["-n", helper, "system"]) }
-    @objc private func green() { execute("/usr/bin/sudo", ["-n", helper, "green"]) }
-    @objc private func orange() { execute("/usr/bin/sudo", ["-n", helper, "orange"]) }
-    @objc private func working() { execute(automationCLI, ["working"]) }
-    @objc private func success() { execute(automationCLI, ["success"]) }
-    @objc private func failure() { execute(automationCLI, ["error"]) }
-    @objc private func idle() { execute(automationCLI, ["idle"]) }
+    @objc private func turnOff() { executeState("off") }
+    @objc private func systemMode() { executeState("system") }
+    @objc private func green() { executeState("green") }
+    @objc private func orange() { executeState("orange") }
+    @objc private func working() { executeState("working") }
+    @objc private func success() { executeState("success") }
+    @objc private func failure() { executeState("error") }
+    @objc private func idle() { executeState("idle") }
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
