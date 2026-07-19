@@ -11,7 +11,7 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 - Restore normal system-controlled behavior.
 - Dynamic menu action based on the current LED state.
 - Dynamic menu bar icon that follows the actual SMC LED mode.
-- Optional monochrome or real-color menu bar icon.
+- Optional monochrome icon or colored bulb indication.
 - Force green or orange LED modes.
 - Automation states for builds, scripts and AI coding agents.
 - Codex CLI wrapper with working, success and error indication.
@@ -24,7 +24,7 @@ A lightweight macOS menu bar utility for controlling the MagSafe connector LED o
 - Tested on MacBook Pro M5.
 - Reports for other models are welcome.
 
-## Install
+## Install from source
 
 Install Xcode Command Line Tools if needed:
 
@@ -47,14 +47,61 @@ The installer requests an administrator password once. It installs:
 - `/usr/local/libexec/magsafe-led-helper`
 - `/usr/local/bin/magsafe-dark`
 - `/usr/local/bin/codex-led`
+- `/etc/sudoers.d/magsafe-dark`
 
 ## Update
 
 ```bash
-cd magsafe-dark
+cd ~/Projects/magsafe-dark
 git pull
 ./install.sh
 ```
+
+## Build the application
+
+```bash
+zsh ./build.sh
+```
+
+The application is created at:
+
+```text
+build/MagSafe Dark.app
+```
+
+## Build an unsigned installer package
+
+```bash
+zsh ./build-pkg.sh
+```
+
+The default output is:
+
+```text
+build/MagSafeDark-1.1.0-unsigned.pkg
+```
+
+Specify another package version as the first argument:
+
+```bash
+zsh ./build-pkg.sh 1.2.0
+```
+
+Test the package locally:
+
+```bash
+sudo installer \
+  -pkg build/MagSafeDark-1.1.0-unsigned.pkg \
+  -target /
+```
+
+Inspect its payload:
+
+```bash
+pkgutil --payload-files build/MagSafeDark-1.1.0-unsigned.pkg
+```
+
+The generated package is unsigned. For public distribution without Gatekeeper warnings, the application and package must be signed with Apple Developer ID certificates and notarized by Apple.
 
 ## Menu bar controls
 
@@ -67,12 +114,10 @@ The menu bar icon is refreshed every second, so changes made by `codex-led`, she
 
 The **Icon appearance** submenu provides:
 
-- **Monochrome** — uses the standard macOS template icon and automatically adapts to light or dark menu bars.
-- **Show actual LED color** — green for SMC mode `3`, orange for mode `4`, gray for off and the normal label color for system mode.
+- **Monochrome** — uses the standard macOS template icon and adapts to light or dark menu bars.
+- **Color the bulb using the LED color** — only the bulb is green or orange; its outline and socket remain in the normal system menu bar color.
 
 The selected icon appearance is stored in `UserDefaults` and persists after restarting the app.
-
-The automation test submenu was removed from the app menu. Automation remains available through the command-line tools below.
 
 ## Command-line automation
 
@@ -159,6 +204,8 @@ This can be used with builds, tests, backups, deployments, SSH jobs and renderin
 ```bash
 ./uninstall.sh
 ```
+
+The script removes the application, helper, command-line tools and sudoers rule.
 
 ## LED modes
 
