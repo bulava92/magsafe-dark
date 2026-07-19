@@ -1,7 +1,10 @@
 #!/bin/zsh
 set -euo pipefail
+
 pkill -x MagSafeDark 2>/dev/null || true
-sudo rm -rf /Applications/MagSafeDark.app
+sudo rm -rf \
+  "/Applications/MagSafe Dark.app" \
+  /Applications/MagSafeDark.app
 sudo rm -f \
   /usr/local/libexec/magsafe-led-helper \
   /usr/local/bin/magsafe-dark \
