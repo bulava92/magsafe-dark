@@ -21,6 +21,49 @@ original = text
 if 'import IOKit.ps' not in text:
     text = text.replace('import Foundation\n', 'import Foundation\nimport IOKit.ps\n', 1)
 
+# pmset reports "finishing charge" at 100% with 0:00 remaining. That is not an
+# active charge for UI purposes: show the plug and hide completion time.
+old_pmset_logic = '''        let isCharging: Bool?
+        if lower.contains("not charging") || lower.contains("charged") { isCharging = false }
+        else if lower.contains("charging") || lower.contains("finishing charge") { isCharging = true }
+        else if onACPower == false { isCharging = false }
+        else { isCharging = nil }
+'''
+new_pmset_logic = '''        let isCharging: Bool?
+        if percentage == 100 ||
+           lower.contains("not charging") ||
+           lower.contains("charged") ||
+           lower.contains("finishing charge") {
+            isCharging = false
+        } else if lower.contains("charging") {
+            isCharging = true
+        } else if onACPower == false {
+            isCharging = false
+        } else {
+            isCharging = nil
+        }
+'''
+if old_pmset_logic in text:
+    text = text.replace(old_pmset_logic, new_pmset_logic, 1)
+elif 'lower.contains("finishing charge") {' not in text:
+    raise SystemExit('Could not update pmset charging-state logic')
+
+old_completion = '''            let hours = Int(lower[hourRange]),
+            let minutes = Int(lower[minuteRange]) {
+            chargeCompletion = Date().addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60))
+        }
+'''
+new_completion = '''            let hours = Int(lower[hourRange]),
+            let minutes = Int(lower[minuteRange]) {
+            let remainingSeconds = hours * 3600 + minutes * 60
+            if remainingSeconds > 0 {
+                chargeCompletion = Date().addingTimeInterval(TimeInterval(remainingSeconds))
+            }
+        }
+'''
+if old_completion in text:
+    text = text.replace(old_completion, new_completion, 1)
+
 # Keep the original boring.notch PNG pixels. They already contain the intended
 # black edge and antialiasing; template tinting destroys that geometry.
 text = text.replace('        image.isTemplate = true\n        return image\n', '        image.isTemplate = false\n        return image\n', 1)
@@ -113,8 +156,10 @@ native_methods = r'''    private func installNativePowerSourceObserver() {
               let sources = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else { return }
 
         var onACPower = false
-        var isCharging = false
+        var reportsCharging = false
+        var isFinishingCharge = false
         var batteryPercent: Int?
+        var timeToFullChargeMinutes: Int?
 
         for source in sources {
             guard let description = IOPSGetPowerSourceDescription(snapshot, source)?.takeUnretainedValue() as? [String: Any] else { continue }
@@ -123,7 +168,15 @@ native_methods = r'''    private func installNativePowerSourceObserver() {
                 onACPower = true
             }
             if let charging = description[kIOPSIsChargingKey as String] as? Bool {
-                isCharging = isCharging || charging
+                reportsCharging = reportsCharging || charging
+            }
+            if let finishing = description["Is Finishing Charge"] as? Bool {
+                isFinishingCharge = isFinishingCharge || finishing
+            } else if let finishing = description["Is Finishing Charge"] as? Int {
+                isFinishingCharge = isFinishingCharge || finishing != 0
+            }
+            if let minutes = description[kIOPSTimeToFullChargeKey as String] as? Int {
+                timeToFullChargeMinutes = minutes
             }
             if let current = description[kIOPSCurrentCapacityKey as String] as? Int,
                let maximum = description[kIOPSMaxCapacityKey as String] as? Int,
@@ -132,16 +185,30 @@ native_methods = r'''    private func installNativePowerSourceObserver() {
             }
         }
 
-        if !onACPower { isCharging = false }
+        let hasRemainingChargeTime = (timeToFullChargeMinutes ?? 0) > 0
+        let belowFullCapacity = (batteryPercent ?? 0) < 100
+        let isCharging = onACPower && reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime
+
         cachedOnACPower = onACPower
         cachedIsCharging = isCharging
         if let batteryPercent { cachedBatteryPercent = batteryPercent }
-        if !isCharging { cachedChargeCompletion = nil }
+        if isCharging, let minutes = timeToFullChargeMinutes, minutes > 0 {
+            cachedChargeCompletion = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        } else {
+            cachedChargeCompletion = nil
+        }
         updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
     }
 
 '''
-if 'private func installNativePowerSourceObserver()' not in text:
+text, replaced_native = re.subn(
+    r'    private func installNativePowerSourceObserver\(\) \{.*?\n    private func registerSystemNotifications\(\) \{',
+    lambda _: native_methods + '    private func registerSystemNotifications() {',
+    text,
+    count=1,
+    flags=re.S,
+)
+if replaced_native == 0:
     anchor = '    private func registerSystemNotifications() {'
     if anchor not in text:
         raise SystemExit('Could not find notification registration anchor')
@@ -162,7 +229,6 @@ text = re.sub(
     count=1,
     flags=re.S,
 )
-# The screen-wake notification previously referenced the removed method.
 text = text.replace(
     'center.addObserver(self, selector: #selector(powerStateChanged), name: NSWorkspace.screensDidWakeNotification, object: nil)',
     'center.addObserver(self, selector: #selector(systemDidWake), name: NSWorkspace.screensDidWakeNotification, object: nil)',
@@ -174,6 +240,11 @@ for marker in [
     'IOPSCopyPowerSourcesInfo',
     'IOPSCopyPowerSourcesList',
     'IOPSGetPowerSourceDescription',
+    'kIOPSTimeToFullChargeKey',
+    'description["Is Finishing Charge"]',
+    'let isCharging = onACPower && reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime',
+    'lower.contains("finishing charge")',
+    'remainingSeconds > 0',
     'drawBoringNotchAsset',
     'image.isTemplate = false',
     'guard cachedOnACPower == true else',
@@ -196,7 +267,7 @@ for removed in [
 
 if text != original:
     path.write_text(text)
-    print('Prepared native power callbacks and original boring.notch glyph rendering')
+    print('Prepared native power state with finishing-charge handling')
 else:
-    print('Native power callbacks and original boring.notch glyph rendering already prepared')
+    print('Native power callbacks and finishing-charge handling already prepared')
 PY
