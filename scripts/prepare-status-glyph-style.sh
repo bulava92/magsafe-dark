@@ -34,8 +34,12 @@ text = text.replace(
 text = text.replace(
     '            restoreModeKey: false,\n',
     '            restoreModeKey: false,\n'
-    '            statusGlyphStyleKey: StatusGlyphStyle.battery.rawValue,\n',
+    '            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,\n',
     1,
+)
+text = text.replace(
+    '            statusGlyphStyleKey: StatusGlyphStyle.battery.rawValue,\n',
+    '            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,\n',
 )
 
 icon_style_block = '''    private var iconStyle: IconStyle {
@@ -45,7 +49,7 @@ icon_style_block = '''    private var iconStyle: IconStyle {
 '''
 status_style_block = icon_style_block + '''
     private var statusGlyphStyle: StatusGlyphStyle {
-        get { StatusGlyphStyle(rawValue: defaults.string(forKey: statusGlyphStyleKey) ?? "") ?? .battery }
+        get { StatusGlyphStyle(rawValue: defaults.string(forKey: statusGlyphStyleKey) ?? "") ?? .lightbulb }
         set { defaults.set(newValue.rawValue, forKey: statusGlyphStyleKey) }
     }
 '''
@@ -53,6 +57,11 @@ if 'private var statusGlyphStyle: StatusGlyphStyle' not in text:
     if icon_style_block not in text:
         raise SystemExit('Could not find iconStyle property')
     text = text.replace(icon_style_block, status_style_block, 1)
+else:
+    text = text.replace(
+        'get { StatusGlyphStyle(rawValue: defaults.string(forKey: statusGlyphStyleKey) ?? "") ?? .battery }',
+        'get { StatusGlyphStyle(rawValue: defaults.string(forKey: statusGlyphStyleKey) ?? "") ?? .lightbulb }',
+    )
 
 appearance_anchor = '        settings.addItem(submenu(text("Вид значка", "Icon appearance"), appearance))\n'
 glyph_menu = '''        settings.addItem(submenu(text("Вид значка", "Icon appearance"), appearance))
@@ -61,7 +70,7 @@ glyph_menu = '''        settings.addItem(submenu(text("Вид значка", "Ic
         let batteryGlyph = item(text("Батарея", "Battery"), #selector(useBatteryStatusGlyph))
         batteryGlyph.state = statusGlyphStyle == .battery ? .on : .off
         glyphs.addItem(batteryGlyph)
-        let lightbulbGlyph = item(text("Лампочка MagSafe", "MagSafe lightbulb"), #selector(useLightbulbStatusGlyph))
+        let lightbulbGlyph = item(text("Лампочка", "Lightbulb"), #selector(useLightbulbStatusGlyph))
         lightbulbGlyph.state = statusGlyphStyle == .lightbulb ? .on : .off
         glyphs.addItem(lightbulbGlyph)
         settings.addItem(submenu(text("Значок состояния", "Status icon"), glyphs))
@@ -70,6 +79,11 @@ if '#selector(useBatteryStatusGlyph)' not in text:
     if appearance_anchor not in text:
         raise SystemExit('Could not find icon appearance menu anchor')
     text = text.replace(appearance_anchor, glyph_menu, 1)
+else:
+    text = text.replace(
+        'text("Лампочка MagSafe", "MagSafe lightbulb")',
+        'text("Лампочка", "Lightbulb")',
+    )
 
 plug_method_anchor = '''    private func configuredPlugSymbol() -> NSImage? {
 '''
@@ -146,8 +160,11 @@ for marker in [
     'private enum StatusGlyphStyle: String { case battery, lightbulb }',
     'private let statusGlyphStyleKey = "statusGlyphStyle"',
     'private var statusGlyphStyle: StatusGlyphStyle',
+    'StatusGlyphStyle.lightbulb.rawValue',
+    '?? .lightbulb',
     'systemSymbolName: symbolName',
     'let symbolName = "lightbulb.led.fill"',
+    'text("Лампочка", "Lightbulb")',
     'text("Значок состояния", "Status icon")',
     '#selector(useBatteryStatusGlyph)',
     '#selector(useLightbulbStatusGlyph)',
@@ -158,7 +175,7 @@ for marker in [
 
 if text != original:
     path.write_text(text)
-    print('Prepared selectable battery and MagSafe lightbulb status icons')
+    print('Prepared selectable battery and lightbulb status icons; lightbulb is default')
 else:
     print('Selectable status icon style already prepared')
 PY
