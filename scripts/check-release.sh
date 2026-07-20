@@ -17,6 +17,7 @@ zsh -n install.sh build.sh build-pkg.sh uninstall.sh
 zsh -n \
   scripts/magsafe-dark \
   scripts/codex-led \
+  scripts/prepare-menu-ux.sh \
   scripts/prepare-gui-daemon-transport.sh \
   scripts/prepare-battery-status-icon.sh \
   scripts/prepare-native-power-status.sh \
@@ -40,6 +41,7 @@ zsh ./scripts/test-schedule-editor-layout.sh
 zsh ./scripts/test-codex-led.sh
 zsh ./scripts/test-cli-settings.sh
 zsh ./scripts/test-launchdaemon-layout.sh
+zsh ./scripts/prepare-menu-ux.sh
 swift build
 swift build -c release
 zsh ./scripts/test-helper-interface.sh
@@ -79,6 +81,15 @@ grep -q 'paletteColors: \[fillColor, NSColor.labelColor\]' Sources/MagSafeDark/m
 grep -q 'base.applying(palette)' Sources/MagSafeDark/main.swift
 grep -q 'bulbColor(for: mode)' Sources/MagSafeDark/main.swift
 grep -q 'battery.isTemplate = false' Sources/MagSafeDark/main.swift
+
+grep -q 'Вернуть штатный режим' Sources/MagSafeDark/main.swift
+grep -q 'Выключить индикатор' Sources/MagSafeDark/main.swift
+grep -q 'Отменить ручное управление' Sources/MagSafeDark/main.swift
+grep -q 'Показывать подключение к питанию' Sources/MagSafeDark/main.swift
+grep -q 'Расписание включено' Sources/MagSafeDark/main.swift
+grep -q 'result.state = expectedValue(for: mode) == cachedMode' Sources/MagSafeDark/main.swift
+grep -q 'ruleIsActiveNow' Sources/ScheduleEditor/main.swift
+grep -q 'сохранять последний режим' Sources/ScheduleEditor/main.swift
 
 ! grep -q 'powerPlugStatusItem' Sources/MagSafeDark/main.swift
 ! grep -q 'powerPlugImageView' Sources/MagSafeDark/main.swift
