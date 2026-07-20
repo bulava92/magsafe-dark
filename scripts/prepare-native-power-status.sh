@@ -48,22 +48,6 @@ if old_pmset_logic in text:
 elif 'lower.contains("finishing charge") {' not in text:
     raise SystemExit('Could not update pmset charging-state logic')
 
-old_completion = '''            let hours = Int(lower[hourRange]),
-            let minutes = Int(lower[minuteRange]) {
-            chargeCompletion = Date().addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60))
-        }
-'''
-new_completion = '''            let hours = Int(lower[hourRange]),
-            let minutes = Int(lower[minuteRange]) {
-            let remainingSeconds = hours * 3600 + minutes * 60
-            if remainingSeconds > 0 {
-                chargeCompletion = Date().addingTimeInterval(TimeInterval(remainingSeconds))
-            }
-        }
-'''
-if old_completion in text:
-    text = text.replace(old_completion, new_completion, 1)
-
 # Keep the original boring.notch PNG pixels. They already contain the intended
 # black edge and antialiasing; template tinting destroys that geometry.
 text = text.replace('        image.isTemplate = true\n        return image\n', '        image.isTemplate = false\n        return image\n', 1)
@@ -214,8 +198,6 @@ if replaced_native == 0:
         raise SystemExit('Could not find notification registration anchor')
     text = text.replace(anchor, native_methods + anchor, 1)
 
-# Remove the delayed power-source observer and delayed refresh path. The native
-# IOPS callback above is the source of truth for the status icon.
 text = re.sub(
     r'\n        DistributedNotificationCenter\.default\(\)\.addObserver\(self, selector: #selector\(powerStateChanged\), name: NSNotification\.Name\("com\.apple\.system\.powersources\.source"\), object: nil\)',
     '',
@@ -244,7 +226,6 @@ for marker in [
     'description["Is Finishing Charge"]',
     'let isCharging = onACPower && reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime',
     'lower.contains("finishing charge")',
-    'remainingSeconds > 0',
     'drawBoringNotchAsset',
     'image.isTemplate = false',
     'guard cachedOnACPower == true else',
