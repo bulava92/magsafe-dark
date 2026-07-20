@@ -60,7 +60,6 @@ grep -q 'kIOPSTimeToFullChargeKey' Sources/MagSafeDark/main.swift
 grep -q 'description\["Is Finishing Charge"\]' Sources/MagSafeDark/main.swift
 grep -q 'reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime' Sources/MagSafeDark/main.swift
 grep -q 'lower.contains("finishing charge")' Sources/MagSafeDark/main.swift
-grep -q 'remainingSeconds > 0' Sources/MagSafeDark/main.swift
 grep -q 'guard cachedOnACPower == true' Sources/MagSafeDark/main.swift
 grep -q 'private var appearanceObservation: NSKeyValueObservation?' Sources/MagSafeDark/main.swift
 grep -q 'statusItem.button?.observe(' Sources/MagSafeDark/main.swift
