@@ -26,6 +26,7 @@ ICON_HEIGHT=$(sips -g pixelHeight "$ICON_SOURCE" | awk '/pixelHeight/ { print $2
 [[ "$BUILD_NUMBER" == <-> ]] || { print -u2 "MAGSAFE_DARK_BUILD_NUMBER must be an integer"; exit 64; }
 
 zsh ./scripts/prepare-menu-ux.sh
+zsh ./scripts/prepare-status-glyph-style.sh
 swift build -c release
 
 rm -rf "$APP_DIR" "$ICONSET_DIR" "$ICON_FILE" "build/MagSafeDark.app"
