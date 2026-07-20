@@ -79,7 +79,7 @@ grep -q 'battery.50percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.75percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.100percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.100percent.bolt' Sources/MagSafeDark/main.swift
-grep -q 'paletteColors: \[NSColor.labelColor, fillColor\]' Sources/MagSafeDark/main.swift
+grep -q 'paletteColors: \[NSColor.secondaryLabelColor, NSColor.labelColor, fillColor\]' Sources/MagSafeDark/main.swift
 grep -q 'base.applying(palette)' Sources/MagSafeDark/main.swift
 grep -q 'bulbColor(for: mode)' Sources/MagSafeDark/main.swift
 grep -q 'battery.isTemplate = false' Sources/MagSafeDark/main.swift
