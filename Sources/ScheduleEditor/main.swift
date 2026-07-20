@@ -63,21 +63,21 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
     private var isChangingSelection = false
 
     private let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 760, height: 430),
-        styleMask: [.titled, .closable, .miniaturizable],
+        contentRect: NSRect(x: 0, y: 0, width: 860, height: 540),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable],
         backing: .buffered,
         defer: false
     )
     private let enabled = NSButton(checkboxWithTitle: "Использовать расписание", target: nil, action: nil)
     private let fallback = NSPopUpButton()
     private let table = NSTableView()
-    private let editorBox = NSBox()
     private var dayButtons: [NSButton] = []
     private let startPicker = NSDatePicker()
     private let endPicker = NSDatePicker()
     private let modePopup = NSPopUpButton()
     private let ruleEnabled = NSButton(checkboxWithTitle: "Интервал включён", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
+    private let removeButton = NSButton(title: "Удалить", target: nil, action: nil)
 
     override init() {
         schedule = (try? loadSchedule()) ?? (try! defaultSchedule())
@@ -100,109 +100,239 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
 
     private func buildUI() {
         window.title = "Расписание MagSafe Dark"
-        let root = NSView(frame: window.contentView!.bounds)
-        root.autoresizingMask = [.width, .height]
+        window.minSize = NSSize(width: 760, height: 500)
+        window.setFrameAutosaveName("MagSafeDarkScheduleEditorWindow")
+
+        let root = NSView()
+        root.translatesAutoresizingMaskIntoConstraints = false
         window.contentView = root
 
-        enabled.frame = NSRect(x: 20, y: 384, width: 220, height: 24)
+        let title = NSTextField(labelWithString: "Расписание индикатора")
+        title.font = .systemFont(ofSize: 20, weight: .semibold)
+
+        let subtitle = NSTextField(labelWithString: "Настройте режим MagSafe для выбранных дней и интервалов времени.")
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.lineBreakMode = .byWordWrapping
+        subtitle.maximumNumberOfLines = 2
+
+        let heading = NSStackView(views: [title, subtitle])
+        heading.orientation = .vertical
+        heading.alignment = .leading
+        heading.spacing = 4
+
         enabled.state = schedule.enabled ? .on : .off
-        root.addSubview(enabled)
 
-        fallback.frame = NSRect(x: 390, y: 379, width: 335, height: 30)
-        fallback.addItems(withTitles: ["Вне расписания — штатный режим", "Вне расписания — выключено", "Вне расписания — постоянный режим"])
+        fallback.addItems(withTitles: [
+            "Штатный режим",
+            "Выключено",
+            "Постоянный режим"
+        ])
         fallback.selectItem(at: schedule.fallback == .system ? 0 : schedule.fallback == .off ? 1 : 2)
-        root.addSubview(fallback)
 
-        let scroll = NSScrollView(frame: NSRect(x: 20, y: 82, width: 275, height: 282))
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
+        let fallbackLabel = NSTextField(labelWithString: "Вне расписания:")
+        fallbackLabel.textColor = .secondaryLabelColor
+
+        let fallbackRow = NSStackView(views: [fallbackLabel, fallback])
+        fallbackRow.orientation = .horizontal
+        fallbackRow.alignment = .centerY
+        fallbackRow.spacing = 8
+
+        let settingsRow = NSStackView(views: [enabled, NSView(), fallbackRow])
+        settingsRow.orientation = .horizontal
+        settingsRow.alignment = .centerY
+        settingsRow.spacing = 12
+
+        let header = NSStackView(views: [heading, settingsRow])
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 14
+
         table.headerView = nil
         table.allowsEmptySelection = false
         table.allowsMultipleSelection = false
+        table.rowHeight = 52
+        table.intercellSpacing = NSSize(width: 0, height: 2)
+        table.selectionHighlightStyle = .regular
         table.delegate = self
         table.dataSource = self
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("summary"))
-        column.width = 260
+        column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
+
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = true
         scroll.documentView = table
-        root.addSubview(scroll)
 
-        let add = NSButton(title: "+ Добавить", target: self, action: #selector(addRule))
-        add.frame = NSRect(x: 20, y: 44, width: 105, height: 28)
-        root.addSubview(add)
-        let remove = NSButton(title: "Удалить", target: self, action: #selector(removeRule))
-        remove.frame = NSRect(x: 135, y: 44, width: 95, height: 28)
-        root.addSubview(remove)
+        let listTitle = NSTextField(labelWithString: "Интервалы")
+        listTitle.font = .systemFont(ofSize: 13, weight: .semibold)
 
-        editorBox.titlePosition = .noTitle
-        editorBox.frame = NSRect(x: 315, y: 82, width: 425, height: 282)
-        root.addSubview(editorBox)
-        buildRuleEditor(in: editorBox.contentView!)
+        let addButton = NSButton(title: "Добавить", target: self, action: #selector(addRule))
+        addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        addButton.imagePosition = .imageLeading
 
-        statusLabel.frame = NSRect(x: 20, y: 18, width: 470, height: 20)
+        removeButton.target = self
+        removeButton.action = #selector(removeRule)
+        removeButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        removeButton.imagePosition = .imageLeading
+
+        let listButtons = NSStackView(views: [addButton, removeButton, NSView()])
+        listButtons.orientation = .horizontal
+        listButtons.alignment = .centerY
+        listButtons.spacing = 8
+
+        let listPanel = NSStackView(views: [listTitle, scroll, listButtons])
+        listPanel.orientation = .vertical
+        listPanel.alignment = .leading
+        listPanel.spacing = 10
+        listPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        scroll.widthAnchor.constraint(equalTo: listPanel.widthAnchor).isActive = true
+        listButtons.widthAnchor.constraint(equalTo: listPanel.widthAnchor).isActive = true
+        listPanel.widthAnchor.constraint(equalToConstant: 300).isActive = true
+
+        let editorPanel = buildRuleEditor()
+        editorPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentRow = NSStackView(views: [listPanel, divider, editorPanel])
+        contentRow.orientation = .horizontal
+        contentRow.alignment = .top
+        contentRow.spacing = 18
+        contentRow.distribution = .fill
+
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.heightAnchor.constraint(equalTo: contentRow.heightAnchor).isActive = true
+        editorPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 390).isActive = true
+
         statusLabel.textColor = .systemRed
-        root.addSubview(statusLabel)
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let cancel = NSButton(title: "Отмена", target: self, action: #selector(cancel))
-        cancel.frame = NSRect(x: 550, y: 12, width: 90, height: 32)
-        root.addSubview(cancel)
-        let save = NSButton(title: "Сохранить", target: self, action: #selector(save))
-        save.keyEquivalent = "\r"
-        save.frame = NSRect(x: 650, y: 12, width: 90, height: 32)
-        root.addSubview(save)
+        let cancelButton = NSButton(title: "Отмена", target: self, action: #selector(cancel))
+        let saveButton = NSButton(title: "Сохранить", target: self, action: #selector(save))
+        saveButton.keyEquivalent = "\r"
+
+        let footer = NSStackView(views: [statusLabel, NSView(), cancelButton, saveButton])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 10
+
+        let mainStack = NSStackView(views: [header, contentRow, footer])
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 18
+        root.addSubview(mainStack)
+
+        header.widthAnchor.constraint(equalTo: mainStack.widthAnchor).isActive = true
+        settingsRow.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
+        contentRow.widthAnchor.constraint(equalTo: mainStack.widthAnchor).isActive = true
+        footer.widthAnchor.constraint(equalTo: mainStack.widthAnchor).isActive = true
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
+            mainStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22),
+            mainStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 22),
+            mainStack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
+            contentRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 330),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 280)
+        ])
     }
 
-    private func buildRuleEditor(in view: NSView) {
-        ruleEnabled.frame = NSRect(x: 24, y: 230, width: 220, height: 24)
+    private func buildRuleEditor() -> NSView {
+        let container = NSView()
+
+        let sectionTitle = NSTextField(labelWithString: "Параметры интервала")
+        sectionTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+
         ruleEnabled.target = self
         ruleEnabled.action = #selector(updateSelectedRule)
-        view.addSubview(ruleEnabled)
 
-        let daysLabel = NSTextField(labelWithString: "Дни недели")
-        daysLabel.frame = NSRect(x: 24, y: 193, width: 370, height: 20)
-        daysLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        view.addSubview(daysLabel)
+        let daysLabel = formLabel("Дни недели")
+        let daysRow = NSStackView()
+        daysRow.orientation = .horizontal
+        daysRow.alignment = .centerY
+        daysRow.spacing = 6
 
-        let dayTitles = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-        for (index, title) in dayTitles.enumerated() {
-            let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(updateSelectedRule))
-            button.frame = NSRect(x: 24 + index * 54, y: 163, width: 52, height: 24)
+        for (index, title) in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].enumerated() {
+            let button = NSButton(title: title, target: self, action: #selector(updateSelectedRule))
+            button.setButtonType(.pushOnPushOff)
+            button.bezelStyle = .rounded
             button.tag = index + 1
+            button.widthAnchor.constraint(equalToConstant: 42).isActive = true
             dayButtons.append(button)
-            view.addSubview(button)
+            daysRow.addArrangedSubview(button)
         }
 
-        let startLabel = NSTextField(labelWithString: "Начало")
-        startLabel.frame = NSRect(x: 24, y: 125, width: 170, height: 20)
-        startLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        view.addSubview(startLabel)
-        configureTimePicker(startPicker, frame: NSRect(x: 24, y: 92, width: 170, height: 28), view: view)
+        configureTimePicker(startPicker)
+        configureTimePicker(endPicker)
 
-        let endLabel = NSTextField(labelWithString: "Конец")
-        endLabel.frame = NSRect(x: 218, y: 125, width: 176, height: 20)
-        endLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        view.addSubview(endLabel)
-        configureTimePicker(endPicker, frame: NSRect(x: 218, y: 92, width: 176, height: 28), view: view)
+        let startGroup = formGroup(title: "Начало", control: startPicker)
+        let endGroup = formGroup(title: "Конец", control: endPicker)
+        let timeRow = NSStackView(views: [startGroup, endGroup])
+        timeRow.orientation = .horizontal
+        timeRow.alignment = .top
+        timeRow.spacing = 18
+        timeRow.distribution = .fillEqually
 
-        let modeLabel = NSTextField(labelWithString: "Режим индикатора")
-        modeLabel.frame = NSRect(x: 24, y: 57, width: 370, height: 20)
-        modeLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        view.addSubview(modeLabel)
-
-        modePopup.frame = NSRect(x: 24, y: 23, width: 370, height: 30)
         modePopup.addItems(withTitles: modeItems.map(\.0))
         modePopup.target = self
         modePopup.action = #selector(updateSelectedRule)
-        view.addSubview(modePopup)
+        let modeGroup = formGroup(title: "Режим индикатора", control: modePopup)
+
+        let hint = NSTextField(wrappingLabelWithString: "Интервалы могут переходить через полночь. Например, 23:00–08:00 действует ночью.")
+        hint.textColor = .secondaryLabelColor
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+
+        let stack = NSStackView(views: [sectionTitle, ruleEnabled, daysLabel, daysRow, timeRow, modeGroup, hint, NSView()])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        container.addSubview(stack)
+
+        daysRow.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        timeRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        modeGroup.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        hint.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+
+        return container
     }
 
-    private func configureTimePicker(_ picker: NSDatePicker, frame: NSRect, view: NSView) {
-        picker.frame = frame
+    private func formLabel(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        return label
+    }
+
+    private func formGroup(title: String, control: NSView) -> NSStackView {
+        let stack = NSStackView(views: [formLabel(title), control])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func configureTimePicker(_ picker: NSDatePicker) {
         picker.datePickerElements = [.hourMinute]
         picker.datePickerStyle = .textFieldAndStepper
         picker.target = self
         picker.action = #selector(updateSelectedRule)
-        view.addSubview(picker)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { schedule.rules.count }
@@ -210,10 +340,47 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard schedule.rules.indices.contains(row) else { return nil }
         let rule = schedule.rules[row]
-        let field = NSTextField(labelWithString: summary(for: rule))
-        field.lineBreakMode = .byTruncatingTail
-        field.textColor = rule.enabled ? .labelColor : .secondaryLabelColor
-        return field
+        let identifier = NSUserInterfaceItemIdentifier("ScheduleRuleCell")
+        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView) ?? makeRuleCell(identifier: identifier)
+        guard let title = cell.textField, let subtitle = cell.viewWithTag(1001) as? NSTextField else { return cell }
+
+        title.stringValue = "\(compactDays(rule.days))  ·  \(rule.start.stringValue)–\(rule.end.stringValue)"
+        subtitle.stringValue = modeItems.first(where: { $0.1 == rule.mode })?.0 ?? rule.mode.rawValue
+        title.textColor = rule.enabled ? .labelColor : .secondaryLabelColor
+        subtitle.textColor = .secondaryLabelColor
+        return cell
+    }
+
+    private func makeRuleCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
+        let cell = NSTableCellView()
+        cell.identifier = identifier
+
+        let title = NSTextField(labelWithString: "")
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.lineBreakMode = .byTruncatingTail
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let subtitle = NSTextField(labelWithString: "")
+        subtitle.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.lineBreakMode = .byTruncatingTail
+        subtitle.tag = 1001
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.textField = title
+        cell.addSubview(title)
+        cell.addSubview(subtitle)
+
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 7),
+            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            subtitle.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
+            subtitle.bottomAnchor.constraint(lessThanOrEqualTo: cell.bottomAnchor, constant: -6)
+        ])
+        return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -236,14 +403,9 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         guard schedule.rules.indices.contains(index) else { return }
         isChangingSelection = true
         table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        table.scrollRowToVisible(index)
         isChangingSelection = false
         loadRule(at: index)
-    }
-
-    private func summary(for rule: ScheduleRule) -> String {
-        let days = compactDays(rule.days)
-        let mode = modeItems.first(where: { $0.1 == rule.mode })?.0 ?? rule.mode.rawValue
-        return "\(days)   \(rule.start.stringValue)–\(rule.end.stringValue)   \(mode)"
     }
 
     private func compactDays(_ days: Set<Int>) -> String {
@@ -264,6 +426,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         startPicker.dateValue = date(for: rule.start)
         endPicker.dateValue = date(for: rule.end)
         modePopup.selectItem(at: modeItems.firstIndex(where: { $0.1 == rule.mode }) ?? 0)
+        removeButton.isEnabled = true
         statusLabel.stringValue = ""
     }
 
@@ -273,6 +436,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         startPicker.isEnabled = value
         endPicker.isEnabled = value
         modePopup.isEnabled = value
+        removeButton.isEnabled = value
     }
 
     @objc private func updateSelectedRule() {
@@ -293,6 +457,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
             if reloadTable {
                 isChangingSelection = true
                 table.reloadData()
+                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 isChangingSelection = false
             }
         } catch {
