@@ -38,12 +38,12 @@ supported
 
 ## Installation
 
-Version 1.4.0 is currently installed from source:
+Version 1.4.1 is currently installed from source:
 
 ```bash
 git clone https://github.com/bulava92/magsafe-dark.git
 cd magsafe-dark
-git checkout develop-1.4.0
+git checkout develop-1.4.1
 zsh ./scripts/check-release.sh
 zsh ./install.sh
 ```

@@ -38,12 +38,12 @@ supported
 
 ## Установка
 
-Версия 1.4.0 пока устанавливается из исходников:
+Версия 1.4.1 пока устанавливается из исходников:
 
 ```bash
 git clone https://github.com/bulava92/magsafe-dark.git
 cd magsafe-dark
-git checkout develop-1.4.0
+git checkout develop-1.4.1
 zsh ./scripts/check-release.sh
 zsh ./install.sh
 ```

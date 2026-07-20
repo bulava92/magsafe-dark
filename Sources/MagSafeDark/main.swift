@@ -1,10 +1,12 @@
 import AppKit
+import Darwin
 import Foundation
 import IOKit.ps
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum IconStyle: String { case monochrome, actualColor }
+    private enum StatusGlyphStyle: String { case battery, lightbulb }
     private enum AppLanguage: String { case ru, en }
 
     private struct CommandResult {
@@ -30,10 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let commandQueue = DispatchQueue(label: "su.xyz.MagSafeDark.commands", qos: .utility)
 
     private var statusItem: NSStatusItem!
-    private weak var statusContentStack: NSStackView?
-    private weak var statusBatteryImageView: NSImageView?
-    private weak var statusTextField: NSTextField?
-    private weak var statusPlugImageView: NSImageView?
+    private var singleInstanceLockFileDescriptor: Int32 = -1
     private var refreshTimer: Timer?
     private var appearanceObservation: NSKeyValueObservation?
     private var powerSourceRunLoopSource: CFRunLoopSource?
@@ -53,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private weak var cancelTimerMenuItem: NSMenuItem?
 
     private let iconStyleKey = "statusIconStyle"
+    private let statusGlyphStyleKey = "statusGlyphStyle"
     private let rememberedModeKey = "rememberedLEDMode"
     private let restoreModeKey = "restoreLEDModeAtLaunch"
     private let successSecondsKey = "codexSuccessSeconds"
@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         defaults.register(defaults: [
             restoreModeKey: false,
+            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,
             successSecondsKey: 5,
             errorSecondsKey: 5,
             notificationsKey: true,
@@ -127,14 +128,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func enforceSingleInstance() -> Bool {
-        guard let bundleID = Bundle.main.bundleIdentifier else { return true }
-        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        let processID = ProcessInfo.processInfo.processIdentifier
+        let bundleID = Bundle.main.bundleIdentifier
+        let processName = ProcessInfo.processInfo.processName
+        let others = NSWorkspace.shared.runningApplications.filter {
+            $0.processIdentifier != processID &&
+                ((bundleID != nil && $0.bundleIdentifier == bundleID) || $0.localizedName == processName)
+        }
         if let existing = others.first {
             existing.activate(options: [.activateIgnoringOtherApps])
             NSApp.terminate(nil)
             return false
         }
+
+        let lockURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MagSafe Dark/.instance.lock")
+        do {
+            try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } catch {
+            return true
+        }
+
+        let descriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { return true }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor)
+            NSApp.terminate(nil)
+            return false
+        }
+        singleInstanceLockFileDescriptor = descriptor
         return true
     }
 
@@ -166,8 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let sources = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else { return }
 
         var onACPower = false
-        var isCharging = false
+        var reportsCharging = false
+        var isFinishingCharge = false
         var batteryPercent: Int?
+        var timeToFullChargeMinutes: Int?
 
         for source in sources {
             guard let description = IOPSGetPowerSourceDescription(snapshot, source)?.takeUnretainedValue() as? [String: Any] else { continue }
@@ -176,7 +200,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 onACPower = true
             }
             if let charging = description[kIOPSIsChargingKey as String] as? Bool {
-                isCharging = isCharging || charging
+                reportsCharging = reportsCharging || charging
+            }
+            if let finishing = description["Is Finishing Charge"] as? Bool {
+                isFinishingCharge = isFinishingCharge || finishing
+            } else if let finishing = description["Is Finishing Charge"] as? Int {
+                isFinishingCharge = isFinishingCharge || finishing != 0
+            }
+            if let minutes = description[kIOPSTimeToFullChargeKey as String] as? Int {
+                timeToFullChargeMinutes = minutes
             }
             if let current = description[kIOPSCurrentCapacityKey as String] as? Int,
                let maximum = description[kIOPSMaxCapacityKey as String] as? Int,
@@ -185,11 +217,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        if !onACPower { isCharging = false }
+        let hasRemainingChargeTime = (timeToFullChargeMinutes ?? 0) > 0
+        let belowFullCapacity = (batteryPercent ?? 0) < 100
+        let isCharging = onACPower && reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime
+
         cachedOnACPower = onACPower
         cachedIsCharging = isCharging
         if let batteryPercent { cachedBatteryPercent = batteryPercent }
-        if !isCharging { cachedChargeCompletion = nil }
+        if isCharging, let minutes = timeToFullChargeMinutes, minutes > 0 {
+            cachedChargeCompletion = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        } else {
+            cachedChargeCompletion = nil
+        }
         updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
     }
 
@@ -209,6 +248,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var iconStyle: IconStyle {
         get { IconStyle(rawValue: defaults.string(forKey: iconStyleKey) ?? "") ?? .monochrome }
         set { defaults.set(newValue.rawValue, forKey: iconStyleKey) }
+    }
+
+    private var statusGlyphStyle: StatusGlyphStyle {
+        get { StatusGlyphStyle(rawValue: defaults.string(forKey: statusGlyphStyleKey) ?? "") ?? .lightbulb }
+        set { defaults.set(newValue.rawValue, forKey: statusGlyphStyleKey) }
     }
 
     private func rebuildMenu() {
@@ -231,11 +275,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let toggle = cachedMode == 1
-            ? item(text("Вернуть штатный режим", "Restore system mode"), #selector(systemMode), key: "0")
-            : item(text("Выключить лампочку", "Turn LED off"), #selector(turnOff), key: "0")
-        toggle.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(toggle)
+        let system = item(text("Вернуть штатный режим", "Restore system mode"), #selector(systemMode), key: "0")
+        system.keyEquivalentModifierMask = [.command, .shift]
+        system.state = cachedMode == 0 && !cachedTemporaryActive ? .on : .off
+        menu.addItem(system)
+
+        let off = item(text("Выключить индикатор", "Turn indicator off"), #selector(turnOff))
+        off.state = cachedMode == 1 ? .on : .off
+        menu.addItem(off)
+
+        let cancelManual = item(text("Отменить ручное управление", "Cancel manual control"), #selector(cancelManualControl))
+        cancelManual.isEnabled = cachedTemporaryActive
+        menu.addItem(cancelManual)
 
         let colors = NSMenu()
         colors.addItem(modeItem(text("Зелёная", "Green"), mode: "green", key: "g"))
@@ -256,14 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timers.addItem(timerItem(text("Выключить на 1 час", "Turn off for 1 hour"), seconds: 3600, mode: "off"))
         timers.addItem(.separator())
         timers.addItem(timerItem(text("Оранжевая на 15 минут", "Orange for 15 minutes"), seconds: 900, mode: "orange"))
-        timers.addItem(item(text("Другой таймер…", "Custom timer…"), #selector(customTimer)))
+        timers.addItem(item(text("Другой временный режим…", "Custom temporary mode…"), #selector(customTimer)))
         if cachedTimerRemaining != nil {
             timers.addItem(.separator())
             let cancel = item(text("Отменить таймер", "Cancel timer"), #selector(cancelTimer))
             cancelTimerMenuItem = cancel
             timers.addItem(cancel)
         }
-        menu.addItem(submenu(text("Таймер", "Timer"), timers))
+        menu.addItem(submenu(text("Временный режим", "Temporary mode"), timers))
 
         let settings = NSMenu()
         let login = item(text("Запускать при входе", "Launch at login"), #selector(toggleLaunchAtLogin))
@@ -284,10 +335,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appearance.addItem(colored)
         settings.addItem(submenu(text("Вид значка", "Icon appearance"), appearance))
 
+        let glyphs = NSMenu()
+        let batteryGlyph = item(text("Батарея", "Battery"), #selector(useBatteryStatusGlyph))
+        batteryGlyph.state = statusGlyphStyle == .battery ? .on : .off
+        glyphs.addItem(batteryGlyph)
+        let lightbulbGlyph = item(text("Лампочка", "Lightbulb"), #selector(useLightbulbStatusGlyph))
+        lightbulbGlyph.state = statusGlyphStyle == .lightbulb ? .on : .off
+        glyphs.addItem(lightbulbGlyph)
+        settings.addItem(submenu(text("Значок состояния", "Status icon"), glyphs))
+        settings.addItem(.separator())
+
         let batteryPercentage = item(text("Показывать процент заряда", "Show battery percentage"), #selector(toggleBatteryPercentage))
         batteryPercentage.state = defaults.bool(forKey: showBatteryPercentageKey) ? .on : .off
         settings.addItem(batteryPercentage)
 
+
+        let chargingState = item(text("Показывать подключение к питанию", "Show power connection"), #selector(toggleChargingState))
+        chargingState.state = defaults.bool(forKey: showChargingStateKey) ? .on : .off
+        settings.addItem(chargingState)
 
         let chargeCompletion = item(text("Показывать время окончания зарядки", "Show charge completion time"), #selector(toggleChargeCompletion))
         chargeCompletion.state = defaults.bool(forKey: showChargeCompletionKey) ? .on : .off
@@ -301,6 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuTimer.state = defaults.bool(forKey: showTimerInMenuKey) ? .on : .off
         timerDisplay.addItem(menuTimer)
         settings.addItem(submenu(text("Остаток таймера", "Timer countdown"), timerDisplay))
+        settings.addItem(.separator())
 
         settings.addItem(codexSettingsItem())
 
@@ -313,6 +379,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         languages.addItem(english)
         settings.addItem(submenu(text("Язык", "Language"), languages))
 
+        let scheduleToggle = item(text("Расписание включено", "Schedule enabled"), #selector(toggleSchedule))
+        scheduleToggle.state = scheduleEnabled ? .on : .off
+        menu.addItem(scheduleToggle)
         menu.addItem(submenu(text("Настройки", "Settings"), settings))
         menu.addItem(.separator())
         menu.addItem(item(text("Настроить расписание…", "Configure schedule…"), #selector(openScheduleEditor)))
@@ -389,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func modeItem(_ title: String, mode: String, key: String = "") -> NSMenuItem {
         let result = item(title, #selector(selectMode(_:)), key: key)
         result.representedObject = mode
+        result.state = expectedValue(for: mode) == cachedMode ? .on : .off
         if !key.isEmpty { result.keyEquivalentModifierMask = [.command, .shift] }
         return result
     }
@@ -440,10 +510,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { onACPower = nil }
 
         let isCharging: Bool?
-        if lower.contains("not charging") || lower.contains("charged") { isCharging = false }
-        else if lower.contains("charging") || lower.contains("finishing charge") { isCharging = true }
-        else if onACPower == false { isCharging = false }
-        else { isCharging = nil }
+        if percentage == 100 ||
+           lower.contains("not charging") ||
+           lower.contains("charged") ||
+           lower.contains("finishing charge") {
+            isCharging = false
+        } else if lower.contains("charging") {
+            isCharging = true
+        } else if onACPower == false {
+            isCharging = false
+        } else {
+            isCharging = nil
+        }
 
         var chargeCompletion: Date?
         if isCharging == true,
@@ -534,7 +612,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func currentModeTitle(_ mode: UInt8?) -> String {
-        text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))")
+        let base = text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))")
+        if cachedTemporaryActive {
+            if let end = cachedTimerEnd {
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                return base + text(" — вручную до \(formatter.string(from: end))", " — manual until \(formatter.string(from: end))")
+            }
+            return base + text(" — ручное управление", " — manual control")
+        }
+        return base + (scheduleEnabled ? text(" — по расписанию", " — scheduled") : "")
     }
 
     private func timerRemainingTitle(_ seconds: Int) -> String {
@@ -616,13 +703,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fillColor: NSColor
     ) -> NSImage? {
         let base = NSImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        let paletteColors: [NSColor]
+        if symbolName == "battery.100percent.bolt" {
+            paletteColors = [
+                NSColor.secondaryLabelColor,
+                NSColor.labelColor,
+                fillColor,
+            ]
+        } else {
+            paletteColors = [
+                fillColor,
+                NSColor.labelColor,
+            ]
+        }
         let palette = NSImage.SymbolConfiguration(
-            paletteColors: [fillColor, NSColor.labelColor]
+            paletteColors: paletteColors
         )
         return NSImage(
             systemSymbolName: symbolName,
             accessibilityDescription: nil
         )?.withSymbolConfiguration(base.applying(palette))
+    }
+
+    private func makeLightbulbStatusIcon(mode: UInt8?) -> NSImage {
+        let symbolName = "lightbulb.led.fill"
+        let base = NSImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        let indicatorColor: NSColor
+        switch mode {
+        case 1:
+            indicatorColor = .tertiaryLabelColor
+        case 3:
+            indicatorColor = .systemGreen
+        case 4, 5, 6, 7, 19:
+            indicatorColor = .systemOrange
+        default:
+            indicatorColor = .labelColor
+        }
+        let palette = NSImage.SymbolConfiguration(
+            paletteColors: [indicatorColor, NSColor.secondaryLabelColor]
+        )
+        let image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: text("Состояние индикатора MagSafe: \(modeName(mode))", "MagSafe LED state: \(modeName(mode))")
+        )?.withSymbolConfiguration(base.applying(palette)) ?? NSImage(size: NSSize(width: 19, height: 18))
+        image.isTemplate = false
+        return image
     }
 
     private func configuredPlugSymbol() -> NSImage? {
@@ -636,55 +761,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         symbol?.isTemplate = true
         return symbol?.withSymbolConfiguration(base)
-    }
-
-    private func installStatusContentViewIfNeeded() {
-        guard statusContentStack == nil, let button = statusItem.button else { return }
-
-        button.image = nil
-        button.title = ""
-        button.imagePosition = .noImage
-
-        let batteryView = NSImageView()
-        batteryView.imageScaling = .scaleNone
-        batteryView.imageAlignment = .alignCenter
-        batteryView.setContentHuggingPriority(.required, for: .horizontal)
-        batteryView.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let textField = NSTextField(labelWithString: "")
-        textField.font = NSFont.menuBarFont(ofSize: 0)
-        textField.textColor = .labelColor
-        textField.alignment = .left
-        textField.lineBreakMode = .byClipping
-        textField.setContentHuggingPriority(.required, for: .horizontal)
-        textField.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let plugView = NSImageView()
-        plugView.imageScaling = .scaleNone
-        plugView.imageAlignment = .alignCenter
-        plugView.setContentHuggingPriority(.required, for: .horizontal)
-        plugView.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let stack = NSStackView(views: [batteryView, textField, plugView])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.distribution = .gravityAreas
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: button.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-        ])
-
-        statusContentStack = stack
-        statusBatteryImageView = batteryView
-        statusTextField = textField
-        statusPlugImageView = plugView
     }
 
     private func makeBatteryStatusIcon(kind: BatteryStatusIconKind, mode: UInt8?) -> NSImage {
@@ -729,9 +805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return makeBatteryStatusIcon(kind: .plugged, mode: mode)
     }
 
-    private func updateStatusIcon(mode: UInt8?, remaining: Int?) {
-        installStatusContentViewIfNeeded()
-
+    private func makeComposedStatusImage(mode: UInt8?, remaining: Int?) -> NSImage {
         let kind: BatteryStatusIconKind
         if cachedOnACPower != true {
             kind = .battery
@@ -741,7 +815,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             kind = .plugged
         }
 
-        statusBatteryImageView?.image = makeBatteryStatusIcon(kind: kind, mode: mode)
+        let primaryImage = statusGlyphStyle == .lightbulb
+            ? makeLightbulbStatusIcon(mode: mode)
+            : makeBatteryStatusIcon(kind: kind, mode: mode)
 
         var statusParts: [String] = []
         if defaults.bool(forKey: showBatteryPercentageKey), let battery = cachedBatteryPercent {
@@ -759,19 +835,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusParts.append(formatDuration(remaining))
         }
 
-        statusTextField?.stringValue = statusParts.joined(separator: "\u{2009}")
-        statusTextField?.isHidden = statusParts.isEmpty
+        let text = statusParts.joined(separator: "\u{2009}")
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.menuBarFont(ofSize: 0),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+        let plugImage = defaults.bool(forKey: showChargingStateKey) && kind == .plugged
+            ? configuredPlugSymbol()
+            : nil
+        let spacing: CGFloat = 4
+        let elements = [primaryImage.size, text.isEmpty ? .zero : textSize, plugImage?.size ?? .zero]
+        let visibleCount = elements.filter { $0.width > 0 }.count
+        let size = NSSize(
+            width: elements.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, visibleCount - 1)),
+            height: elements.map(\.height).max() ?? 0
+        )
 
-        let showPlug = kind == .plugged
-        statusPlugImageView?.image = showPlug ? configuredPlugSymbol() : nil
-        statusPlugImageView?.isHidden = !showPlug
+        let image = NSImage(size: size, flipped: false) { rect in
+            var x = rect.minX
+            func draw(_ image: NSImage) {
+                let frame = NSRect(
+                    x: x,
+                    y: rect.midY - image.size.height / 2,
+                    width: image.size.width,
+                    height: image.size.height
+                )
+                image.draw(in: frame)
+                x += image.size.width + spacing
+            }
 
-        statusItem.button?.image = nil
-        statusItem.button?.title = ""
-        statusContentStack?.layoutSubtreeIfNeeded()
-        if let stack = statusContentStack {
-            statusItem.length = ceil(stack.fittingSize.width)
+            draw(primaryImage)
+            if !text.isEmpty {
+                let frame = NSRect(x: x, y: rect.midY - textSize.height / 2, width: textSize.width, height: textSize.height)
+                (text as NSString).draw(in: frame, withAttributes: attributes)
+                x += textSize.width + spacing
+            }
+            if let plugImage { draw(plugImage) }
+            return true
         }
+        image.isTemplate = false
+        return image
+    }
+
+    private func updateStatusIcon(mode: UInt8?, remaining: Int?) {
+        let image = makeComposedStatusImage(mode: mode, remaining: remaining)
+        statusItem.button?.image = image
+        statusItem.button?.imagePosition = .imageOnly
+        statusItem.button?.title = ""
+        statusItem.length = ceil(image.size.width)
     }
 
     private func updateOpenMenu(mode: UInt8?, remaining: Int?) {
@@ -827,6 +939,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private var scheduleURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MagSafe Dark/Schedule/schedule.json")
+    }
+
+    private var scheduleEnabled: Bool {
+        guard let data = try? Data(contentsOf: scheduleURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return object["enabled"] as? Bool ?? false
+    }
+
+    private func setScheduleEnabled(_ enabled: Bool) throws {
+        var object: [String: Any]
+        if let data = try? Data(contentsOf: scheduleURL),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = existing
+        } else {
+            object = ["enabled": false, "fallback": "system", "rules": []]
+        }
+        object["enabled"] = enabled
+        try FileManager.default.createDirectory(at: scheduleURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: scheduleURL, options: .atomic)
+    }
+
     private var launchAtLoginEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
     private func alert(_ title: String, _ message: String) {
@@ -838,6 +975,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func refreshStatus() { requestRefresh() }
     @objc private func systemDidWake() { requestRefresh(force: true) }
+    @objc private func cancelManualControl() {
+        commandQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.run(self.automationCLI, ["schedule", "clear-manual"])
+            DispatchQueue.main.async {
+                if result.status != 0 {
+                    self.alert(self.text("Не удалось отменить ручное управление", "Could not cancel manual control"), result.output)
+                }
+                self.requestRefresh(force: true)
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    @objc private func toggleSchedule() {
+        do {
+            let enable = !scheduleEnabled
+            try setScheduleEnabled(enable)
+            commandQueue.async { [weak self] in
+                guard let self else { return }
+                _ = self.run(self.automationCLI, ["schedule", enable ? "clear-manual" : "apply"])
+                DispatchQueue.main.async {
+                    self.requestRefresh(force: true)
+                    self.rebuildMenu()
+                }
+            }
+        } catch {
+            alert(text("Не удалось изменить расписание", "Could not change schedule"), error.localizedDescription)
+        }
+    }
+
     @objc private func turnOff() { executeState("off") }
     @objc private func systemMode() { executeState("system") }
 
@@ -928,6 +1096,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         requestRefresh(force: true)
     }
 
+    @objc private func toggleChargingState() {
+        defaults.set(!defaults.bool(forKey: showChargingStateKey), forKey: showChargingStateKey)
+        updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
+        rebuildMenu()
+        requestRefresh(force: true)
+    }
+
     @objc private func toggleChargeCompletion() {
         defaults.set(!defaults.bool(forKey: showChargeCompletionKey), forKey: showChargeCompletionKey)
         updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
@@ -964,6 +1139,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleCodexNotification(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }
         defaults.set(!defaults.bool(forKey: key), forKey: key)
+        rebuildMenu()
+    }
+
+    @objc private func useBatteryStatusGlyph() {
+        statusGlyphStyle = .battery
+        updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
+        rebuildMenu()
+    }
+
+    @objc private func useLightbulbStatusGlyph() {
+        statusGlyphStyle = .lightbulb
+        updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
         rebuildMenu()
     }
 
@@ -1081,6 +1268,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         refreshTimer?.invalidate()
+        if singleInstanceLockFileDescriptor >= 0 {
+            Darwin.close(singleInstanceLockFileDescriptor)
+            singleInstanceLockFileDescriptor = -1
+        }
         NSApp.terminate(nil)
     }
 }

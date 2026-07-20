@@ -18,26 +18,29 @@ path = Path(sys.argv[1])
 text = path.read_text()
 original = text
 
-text = text.replace(
-    '    private enum IconStyle: String { case monochrome, actualColor }\n',
-    '    private enum IconStyle: String { case monochrome, actualColor }\n'
-    '    private enum StatusGlyphStyle: String { case battery, lightbulb }\n',
-    1,
-)
+if 'private enum StatusGlyphStyle: String' not in text:
+    text = text.replace(
+        '    private enum IconStyle: String { case monochrome, actualColor }\n',
+        '    private enum IconStyle: String { case monochrome, actualColor }\n'
+        '    private enum StatusGlyphStyle: String { case battery, lightbulb }\n',
+        1,
+    )
 
-text = text.replace(
-    '    private let iconStyleKey = "statusIconStyle"\n',
-    '    private let iconStyleKey = "statusIconStyle"\n'
-    '    private let statusGlyphStyleKey = "statusGlyphStyle"\n',
-    1,
-)
+if 'private let statusGlyphStyleKey = "statusGlyphStyle"' not in text:
+    text = text.replace(
+        '    private let iconStyleKey = "statusIconStyle"\n',
+        '    private let iconStyleKey = "statusIconStyle"\n'
+        '    private let statusGlyphStyleKey = "statusGlyphStyle"\n',
+        1,
+    )
 
-text = text.replace(
-    '            restoreModeKey: false,\n',
-    '            restoreModeKey: false,\n'
-    '            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,\n',
-    1,
-)
+if 'statusGlyphStyleKey: StatusGlyphStyle' not in text:
+    text = text.replace(
+        '            restoreModeKey: false,\n',
+        '            restoreModeKey: false,\n'
+        '            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,\n',
+        1,
+    )
 text = text.replace(
     '            statusGlyphStyleKey: StatusGlyphStyle.battery.rawValue,\n',
     '            statusGlyphStyleKey: StatusGlyphStyle.lightbulb.rawValue,\n',
@@ -137,7 +140,7 @@ lightbulb_method = '''    private func makeLightbulbStatusIcon(mode: UInt8?) -> 
         )
         let image = NSImage(
             systemSymbolName: symbolName,
-            accessibilityDescription: text("Состояние индикатора MagSafe: \(modeName(mode))", "MagSafe LED state: \(modeName(mode))")
+            accessibilityDescription: text("Состояние индикатора MagSafe: \\(modeName(mode))", "MagSafe LED state: \\(modeName(mode))")
         )?.withSymbolConfiguration(base.applying(palette)) ?? NSImage(size: NSSize(width: 19, height: 18))
         image.isTemplate = false
         return image
@@ -207,7 +210,7 @@ for marker in [
     'if symbolName == "battery.100percent.bolt"',
     'paletteColors: paletteColors',
     'fillColor,\n                NSColor.labelColor,',
-    'let showPlug = defaults.bool(forKey: showChargingStateKey) && kind == .plugged',
+    'let plugImage = defaults.bool(forKey: showChargingStateKey) && kind == .plugged',
 ]:
     if marker not in text:
         raise SystemExit(f'Missing status glyph marker: {marker}')

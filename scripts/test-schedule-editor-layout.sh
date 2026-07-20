@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[[ "$(tr -d '[:space:]' < VERSION)" == "1.4.0" ]]
+[[ "$(tr -d '[:space:]' < VERSION)" == "1.4.1" ]]
 [[ -f Sources/ScheduleEditor/main.swift ]]
 grep -q 'magsafe-schedule-editor' Package.swift
 grep -q 'Настроить расписание' scripts/prepare-gui-daemon-transport.sh

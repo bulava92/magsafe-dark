@@ -98,7 +98,7 @@ grep -q 'Значок состояния' Sources/MagSafeDark/main.swift
 grep -q 'Лампочка' Sources/MagSafeDark/main.swift
 grep -q 'useBatteryStatusGlyph' Sources/MagSafeDark/main.swift
 grep -q 'useLightbulbStatusGlyph' Sources/MagSafeDark/main.swift
-grep -Fq 'let showPlug = defaults.bool(forKey: showChargingStateKey) && kind == .plugged' Sources/MagSafeDark/main.swift
+grep -Fq 'let plugImage = defaults.bool(forKey: showChargingStateKey) && kind == .plugged' Sources/MagSafeDark/main.swift
 ! grep -Fq 'let showPlug = kind == .plugged' Sources/MagSafeDark/main.swift
 ! grep -q 'statusGlyphStyle == .battery && kind == .plugged' Sources/MagSafeDark/main.swift
 
