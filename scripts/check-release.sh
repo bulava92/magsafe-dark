@@ -43,6 +43,7 @@ zsh ./scripts/test-codex-led.sh
 zsh ./scripts/test-cli-settings.sh
 zsh ./scripts/test-launchdaemon-layout.sh
 zsh ./scripts/prepare-menu-ux.sh
+zsh ./scripts/prepare-native-power-status.sh
 zsh ./scripts/prepare-status-glyph-style.sh
 swift build
 swift build -c release
@@ -55,6 +56,11 @@ grep -q 'IOPSCopyPowerSourcesInfo' Sources/MagSafeDark/main.swift
 grep -q 'IOPSCopyPowerSourcesList' Sources/MagSafeDark/main.swift
 grep -q 'IOPSGetPowerSourceDescription' Sources/MagSafeDark/main.swift
 grep -q 'private func refreshNativePowerState' Sources/MagSafeDark/main.swift
+grep -q 'kIOPSTimeToFullChargeKey' Sources/MagSafeDark/main.swift
+grep -q 'description\["Is Finishing Charge"\]' Sources/MagSafeDark/main.swift
+grep -q 'reportsCharging && !isFinishingCharge && belowFullCapacity && hasRemainingChargeTime' Sources/MagSafeDark/main.swift
+grep -q 'lower.contains("finishing charge")' Sources/MagSafeDark/main.swift
+grep -q 'remainingSeconds > 0' Sources/MagSafeDark/main.swift
 grep -q 'guard cachedOnACPower == true' Sources/MagSafeDark/main.swift
 grep -q 'private var appearanceObservation: NSKeyValueObservation?' Sources/MagSafeDark/main.swift
 grep -q 'statusItem.button?.observe(' Sources/MagSafeDark/main.swift
@@ -90,7 +96,8 @@ grep -q 'Значок состояния' Sources/MagSafeDark/main.swift
 grep -q 'Лампочка' Sources/MagSafeDark/main.swift
 grep -q 'useBatteryStatusGlyph' Sources/MagSafeDark/main.swift
 grep -q 'useLightbulbStatusGlyph' Sources/MagSafeDark/main.swift
-grep -q 'statusGlyphStyle == .battery && kind == .plugged' Sources/MagSafeDark/main.swift
+grep -q 'let showPlug = kind == .plugged' Sources/MagSafeDark/main.swift
+! grep -q 'statusGlyphStyle == .battery && kind == .plugged' Sources/MagSafeDark/main.swift
 
 grep -q 'Вернуть штатный режим' Sources/MagSafeDark/main.swift
 grep -q 'Выключить индикатор' Sources/MagSafeDark/main.swift
