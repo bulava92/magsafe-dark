@@ -18,6 +18,7 @@ zsh -n \
   scripts/magsafe-dark \
   scripts/codex-led \
   scripts/prepare-menu-ux.sh \
+  scripts/prepare-status-glyph-style.sh \
   scripts/prepare-gui-daemon-transport.sh \
   scripts/prepare-battery-status-icon.sh \
   scripts/prepare-native-power-status.sh \
@@ -42,6 +43,7 @@ zsh ./scripts/test-codex-led.sh
 zsh ./scripts/test-cli-settings.sh
 zsh ./scripts/test-launchdaemon-layout.sh
 zsh ./scripts/prepare-menu-ux.sh
+zsh ./scripts/prepare-status-glyph-style.sh
 swift build
 swift build -c release
 zsh ./scripts/test-helper-interface.sh
@@ -81,6 +83,14 @@ grep -q 'paletteColors: \[fillColor, NSColor.labelColor\]' Sources/MagSafeDark/m
 grep -q 'base.applying(palette)' Sources/MagSafeDark/main.swift
 grep -q 'bulbColor(for: mode)' Sources/MagSafeDark/main.swift
 grep -q 'battery.isTemplate = false' Sources/MagSafeDark/main.swift
+
+grep -q 'private enum StatusGlyphStyle: String { case battery, lightbulb }' Sources/MagSafeDark/main.swift
+grep -q 'let symbolName = "lightbulb.led.fill"' Sources/MagSafeDark/main.swift
+grep -q 'Значок состояния' Sources/MagSafeDark/main.swift
+grep -q 'Лампочка MagSafe' Sources/MagSafeDark/main.swift
+grep -q 'useBatteryStatusGlyph' Sources/MagSafeDark/main.swift
+grep -q 'useLightbulbStatusGlyph' Sources/MagSafeDark/main.swift
+grep -q 'statusGlyphStyle == .battery && kind == .plugged' Sources/MagSafeDark/main.swift
 
 grep -q 'Вернуть штатный режим' Sources/MagSafeDark/main.swift
 grep -q 'Выключить индикатор' Sources/MagSafeDark/main.swift
