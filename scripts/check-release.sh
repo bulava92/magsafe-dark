@@ -84,7 +84,10 @@ grep -q 'battery.50percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.75percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.100percent' Sources/MagSafeDark/main.swift
 grep -q 'battery.100percent.bolt' Sources/MagSafeDark/main.swift
-grep -q 'paletteColors: \[NSColor.secondaryLabelColor, NSColor.labelColor, fillColor\]' Sources/MagSafeDark/main.swift
+grep -q 'if symbolName == "battery.100percent.bolt"' Sources/MagSafeDark/main.swift
+grep -q 'paletteColors: paletteColors' Sources/MagSafeDark/main.swift
+grep -q 'NSColor.secondaryLabelColor' Sources/MagSafeDark/main.swift
+grep -q 'fillColor,' Sources/MagSafeDark/main.swift
 grep -q 'base.applying(palette)' Sources/MagSafeDark/main.swift
 grep -q 'bulbColor(for: mode)' Sources/MagSafeDark/main.swift
 grep -q 'battery.isTemplate = false' Sources/MagSafeDark/main.swift
@@ -95,7 +98,8 @@ grep -q 'Значок состояния' Sources/MagSafeDark/main.swift
 grep -q 'Лампочка' Sources/MagSafeDark/main.swift
 grep -q 'useBatteryStatusGlyph' Sources/MagSafeDark/main.swift
 grep -q 'useLightbulbStatusGlyph' Sources/MagSafeDark/main.swift
-grep -q 'let showPlug = kind == .plugged' Sources/MagSafeDark/main.swift
+grep -Fq 'let showPlug = defaults.bool(forKey: showChargingStateKey) && kind == .plugged' Sources/MagSafeDark/main.swift
+! grep -Fq 'let showPlug = kind == .plugged' Sources/MagSafeDark/main.swift
 ! grep -q 'statusGlyphStyle == .battery && kind == .plugged' Sources/MagSafeDark/main.swift
 
 grep -q 'Вернуть штатный режим' Sources/MagSafeDark/main.swift
