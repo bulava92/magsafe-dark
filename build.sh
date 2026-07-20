@@ -25,11 +25,6 @@ ICON_HEIGHT=$(sips -g pixelHeight "$ICON_SOURCE" | awk '/pixelHeight/ { print $2
 (( ICON_WIDTH >= 1024 )) || { print -u2 "AppIcon.png must be at least 1024x1024. Current size: ${ICON_WIDTH}x${ICON_HEIGHT}"; exit 1; }
 [[ "$BUILD_NUMBER" == <-> ]] || { print -u2 "MAGSAFE_DARK_BUILD_NUMBER must be an integer"; exit 64; }
 
-zsh ./scripts/prepare-gui-daemon-transport.sh
-zsh ./scripts/prepare-battery-status-icon.sh >/dev/null
-zsh ./scripts/prepare-native-power-status.sh >/dev/null
-zsh ./scripts/prepare-boring-battery-design.sh
-zsh ./scripts/prepare-schedule-sources.sh
 swift build -c release
 
 rm -rf "$APP_DIR" "$ICONSET_DIR" "$ICON_FILE" "build/MagSafeDark.app"
