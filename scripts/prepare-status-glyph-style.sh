@@ -117,7 +117,7 @@ lightbulb_method = '''    private func makeLightbulbStatusIcon(mode: UInt8?) -> 
         )
         let image = NSImage(
             systemSymbolName: symbolName,
-            accessibilityDescription: text("Состояние индикатора MagSafe: \\(modeName(mode))", "MagSafe LED state: \\(modeName(mode))")
+            accessibilityDescription: text("Состояние индикатора MagSafe: \(modeName(mode))", "MagSafe LED state: \(modeName(mode))")
         )?.withSymbolConfiguration(base.applying(palette)) ?? NSImage(size: NSSize(width: 19, height: 18))
         image.isTemplate = false
         return image
@@ -141,10 +141,11 @@ if old_image in text:
 elif 'statusGlyphStyle == .lightbulb' not in text:
     raise SystemExit('Could not find status battery image assignment')
 
+# Battery/lightbulb only changes the first image. Plug, percentage,
+# charge-completion time and timer remain independent indicators.
 text = text.replace(
-    '        let showPlug = kind == .plugged\n',
     '        let showPlug = statusGlyphStyle == .battery && kind == .plugged\n',
-    1,
+    '        let showPlug = kind == .plugged\n',
 )
 
 method_anchor = '''    @objc private func useMonochromeIcon() {
@@ -179,15 +180,18 @@ for marker in [
     'text("Значок состояния", "Status icon")',
     '#selector(useBatteryStatusGlyph)',
     '#selector(useLightbulbStatusGlyph)',
-    'statusGlyphStyle == .battery && kind == .plugged',
+    'let showPlug = kind == .plugged',
     'paletteColors: [NSColor.secondaryLabelColor, NSColor.labelColor, fillColor]',
 ]:
     if marker not in text:
         raise SystemExit(f'Missing status glyph marker: {marker}')
 
+if 'statusGlyphStyle == .battery && kind == .plugged' in text:
+    raise SystemExit('Power plug must not depend on selected main glyph')
+
 if text != original:
     path.write_text(text)
-    print('Prepared selectable battery and lightbulb status icons; battery interior uses the LED color')
+    print('Prepared independent battery/lightbulb glyph and power indicators')
 else:
     print('Selectable status icon style already prepared')
 PY
