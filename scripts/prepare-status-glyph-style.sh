@@ -11,6 +11,7 @@ SOURCE="Sources/MagSafeDark/main.swift"
 
 python3 - "$SOURCE" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
@@ -85,16 +86,35 @@ else:
         'text("Лампочка", "Lightbulb")',
     )
 
-# Verified with SF Symbols on macOS: palette layers are bolt, outline/terminal, inner fill.
-# Keep the bolt muted, the outline system-colored, and color only the battery interior.
-for old_palette in [
-    'paletteColors: [fillColor, NSColor.labelColor]',
-    'paletteColors: [NSColor.labelColor, fillColor]',
-]:
-    text = text.replace(
-        old_palette,
-        'paletteColors: [NSColor.secondaryLabelColor, NSColor.labelColor, fillColor]',
+# The charging symbol has three palette layers (bolt, outline/terminal, fill),
+# while ordinary battery symbols use two layers (fill, outline). Applying the
+# three-color palette to every battery symbol leaves ordinary batteries unfilled.
+desired_battery_palette = '''        let paletteColors: [NSColor]
+        if symbolName == "battery.100percent.bolt" {
+            paletteColors = [
+                NSColor.secondaryLabelColor,
+                NSColor.labelColor,
+                fillColor,
+            ]
+        } else {
+            paletteColors = [
+                fillColor,
+                NSColor.labelColor,
+            ]
+        }
+        let palette = NSImage.SymbolConfiguration(
+            paletteColors: paletteColors
+        )
+'''
+if 'if symbolName == "battery.100percent.bolt"' not in text:
+    palette_pattern = re.compile(
+        r'''        let palette = NSImage\.SymbolConfiguration\(\n'''
+        r'''            paletteColors: \[[^\n]+\]\n'''
+        r'''        \)\n'''
     )
+    text, replacements = palette_pattern.subn(desired_battery_palette, text, count=1)
+    if replacements != 1:
+        raise SystemExit('Could not find battery palette configuration')
 
 plug_method_anchor = '''    private func configuredPlugSymbol() -> NSImage? {
 '''
@@ -141,12 +161,16 @@ if old_image in text:
 elif 'statusGlyphStyle == .lightbulb' not in text:
     raise SystemExit('Could not find status battery image assignment')
 
-# Battery/lightbulb only changes the first image. Plug, percentage,
-# charge-completion time and timer remain independent indicators.
-text = text.replace(
+# Battery/lightbulb only changes the first image. The power plug remains an
+# independent indicator, but it must respect the user's power-connection setting.
+for old_show_plug in [
     '        let showPlug = statusGlyphStyle == .battery && kind == .plugged\n',
     '        let showPlug = kind == .plugged\n',
-)
+]:
+    text = text.replace(
+        old_show_plug,
+        '        let showPlug = defaults.bool(forKey: showChargingStateKey) && kind == .plugged\n',
+    )
 
 method_anchor = '''    @objc private func useMonochromeIcon() {
 '''
@@ -180,18 +204,22 @@ for marker in [
     'text("Значок состояния", "Status icon")',
     '#selector(useBatteryStatusGlyph)',
     '#selector(useLightbulbStatusGlyph)',
-    'let showPlug = kind == .plugged',
-    'paletteColors: [NSColor.secondaryLabelColor, NSColor.labelColor, fillColor]',
+    'if symbolName == "battery.100percent.bolt"',
+    'paletteColors: paletteColors',
+    'fillColor,\n                NSColor.labelColor,',
+    'let showPlug = defaults.bool(forKey: showChargingStateKey) && kind == .plugged',
 ]:
     if marker not in text:
         raise SystemExit(f'Missing status glyph marker: {marker}')
 
 if 'statusGlyphStyle == .battery && kind == .plugged' in text:
     raise SystemExit('Power plug must not depend on selected main glyph')
+if '        let showPlug = kind == .plugged\n' in text:
+    raise SystemExit('Power plug must respect the power-connection setting')
 
 if text != original:
     path.write_text(text)
-    print('Prepared independent battery/lightbulb glyph and power indicators')
+    print('Prepared independent battery/lightbulb glyph, battery palettes and power indicator setting')
 else:
     print('Selectable status icon style already prepared')
 PY
