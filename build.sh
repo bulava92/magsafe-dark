@@ -9,25 +9,27 @@ APP_DIR="build/${APP_DISPLAY_NAME}.app"
 ICON_SOURCE="Resources/AppIcon.png"
 ICONSET_DIR="build/AppIcon.iconset"
 ICON_FILE="build/AppIcon.icns"
+VERSION="$(tr -d '[:space:]' < VERSION)"
+BUILD_NUMBER="${MAGSAFE_DARK_BUILD_NUMBER:-1}"
+SIGN_IDENTITY="${MAGSAFE_DARK_APP_SIGN_IDENTITY:--}"
 
-if [[ ! -f "$ICON_SOURCE" ]]; then
-  print -u2 "Missing app icon: $ICON_SOURCE"
-  exit 1
-fi
+[[ -n "$VERSION" ]] || { print -u2 "VERSION is empty"; exit 1; }
+[[ -f "$ICON_SOURCE" ]] || { print -u2 "Missing app icon: $ICON_SOURCE"; exit 1; }
 
 ICON_WIDTH=$(sips -g pixelWidth "$ICON_SOURCE" | awk '/pixelWidth/ { print $2 }')
 ICON_HEIGHT=$(sips -g pixelHeight "$ICON_SOURCE" | awk '/pixelHeight/ { print $2 }')
-
-if [[ -z "$ICON_WIDTH" || -z "$ICON_HEIGHT" || "$ICON_WIDTH" != "$ICON_HEIGHT" ]]; then
+[[ -n "$ICON_WIDTH" && -n "$ICON_HEIGHT" && "$ICON_WIDTH" == "$ICON_HEIGHT" ]] || {
   print -u2 "AppIcon.png must be a square PNG. Current size: ${ICON_WIDTH:-unknown}x${ICON_HEIGHT:-unknown}"
   exit 1
-fi
+}
+(( ICON_WIDTH >= 1024 )) || { print -u2 "AppIcon.png must be at least 1024x1024. Current size: ${ICON_WIDTH}x${ICON_HEIGHT}"; exit 1; }
+[[ "$BUILD_NUMBER" == <-> ]] || { print -u2 "MAGSAFE_DARK_BUILD_NUMBER must be an integer"; exit 64; }
 
-if (( ICON_WIDTH < 1024 )); then
-  print -u2 "AppIcon.png must be at least 1024x1024. Current size: ${ICON_WIDTH}x${ICON_HEIGHT}"
-  exit 1
-fi
-
+zsh ./scripts/prepare-gui-daemon-transport.sh
+zsh ./scripts/prepare-battery-status-icon.sh >/dev/null
+zsh ./scripts/prepare-native-power-status.sh >/dev/null
+zsh ./scripts/prepare-boring-battery-design.sh
+zsh ./scripts/prepare-schedule-sources.sh
 swift build -c release
 
 rm -rf "$APP_DIR" "$ICONSET_DIR" "$ICON_FILE" "build/MagSafeDark.app"
@@ -35,11 +37,9 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$ICONSET_DIR"
 cp ".build/release/$EXECUTABLE_NAME" "$APP_DIR/Contents/MacOS/"
 
 make_icon() {
-  local size="$1"
-  local output="$2"
+  local size="$1" output="$2"
   sips -z "$size" "$size" "$ICON_SOURCE" --out "$ICONSET_DIR/$output" >/dev/null
 }
-
 make_icon 16 icon_16x16.png
 make_icon 32 icon_16x16@2x.png
 make_icon 32 icon_32x32.png
@@ -54,7 +54,7 @@ make_icon 1024 icon_512x512@2x.png
 iconutil -c icns "$ICONSET_DIR" -o "$ICON_FILE"
 cp "$ICON_FILE" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -63,13 +63,18 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>MagSafe Dark</string>
 <key>CFBundleExecutable</key><string>MagSafeDark</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.2.1</string>
-<key>CFBundleVersion</key><string>5</string>
+<key>CFBundleShortVersionString</key><string>${VERSION}</string>
+<key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_DIR"
-printf '\nBuilt: %s/%s\n' "$PWD" "$APP_DIR"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --deep --sign - "$APP_DIR"
+else
+  codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+  codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+fi
+printf '\nBuilt MagSafe Dark %s (build %s): %s/%s\n' "$VERSION" "$BUILD_NUMBER" "$PWD" "$APP_DIR"

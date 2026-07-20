@@ -18,19 +18,34 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
     exit(code)
 }
 
-guard geteuid() == 0 else { fail("Run as root.", code: 77) }
-
-if args.count == 2, args[1] == "status" {
+func readACLC() -> UInt8 {
     var value: UInt8 = 0
     let result = smc_read_u8("ACLC", &value)
-    guard result == 0 else { fail("Unable to read ACLC (IOKit error \(result)).") }
-    print(value)
+    guard result == 0 else {
+        fail("ACLC is unavailable on this Mac (IOKit error \(result)).", code: 69)
+    }
+    return value
+}
+
+guard geteuid() == 0 else { fail("Run as root.", code: 77) }
+
+if args.count == 2, args[1] == "probe" {
+    _ = readACLC()
+    print("supported")
+    exit(0)
+}
+
+if args.count == 2, args[1] == "status" {
+    print(readACLC())
     exit(0)
 }
 
 guard args.count == 2, let value = values[args[1]] else {
-    fail("Usage: magsafe-led-helper off|system|green|orange|flash|blink-slow|blink-fast|blink-off|status", code: 64)
+    fail("Usage: magsafe-led-helper off|system|green|orange|flash|blink-slow|blink-fast|blink-off|status|probe", code: 64)
 }
+
 let result = smc_write_u8("ACLC", value)
-guard result == 0 else { fail("Unable to write ACLC (IOKit error \(result)).") }
+guard result == 0 else {
+    fail("Unable to write ACLC (IOKit error \(result)).", code: 69)
+}
 print("ok")
