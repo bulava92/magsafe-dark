@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+VERSION="$(tr -d '[:space:]' < VERSION)"
 zsh ./build.sh
 
 APP_PATH="/Applications/MagSafe Dark.app"
@@ -123,4 +124,4 @@ sudo ditto "$BUILD_APP_PATH" "$APP_PATH"
 sudo chown -R root:wheel "$APP_PATH"
 
 open "$APP_PATH"
-printf '\nInstalled MagSafe Dark 1.4.0 with LaunchDaemon, schedule agent and visual editor.\n'
+printf '\nInstalled MagSafe Dark %s with LaunchDaemon, schedule agent and visual editor.\n' "$VERSION"

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MagSafeCore
 
@@ -178,35 +179,64 @@ private func printJSON<T: Encodable>(_ value: T) throws {
     print()
 }
 
-private func runLoop() throws -> Never {
-    let center = NotificationCenter.default
-    var shouldResolve = true
-    let clockObserver = center.addObserver(forName: NSNotification.Name.NSSystemClockDidChange, object: nil, queue: nil) { _ in shouldResolve = true }
-    let zoneObserver = center.addObserver(forName: NSNotification.Name.NSSystemTimeZoneDidChange, object: nil, queue: nil) { _ in shouldResolve = true }
-    defer {
-        center.removeObserver(clockObserver)
-        center.removeObserver(zoneObserver)
+private final class SchedulerRunLoop {
+    private var timer: Timer?
+    private var observers: [NSObjectProtocol] = []
+
+    func start() {
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSNotification.Name.NSSystemClockDidChange, object: nil, queue: .main) { [weak self] _ in
+                self?.applyAndScheduleNextBoundary()
+            },
+            center.addObserver(forName: NSNotification.Name.NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
+                self?.applyAndScheduleNextBoundary()
+            },
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.applyAndScheduleNextBoundary()
+            },
+        ]
+        applyAndScheduleNextBoundary()
     }
 
-    while true {
-        autoreleasepool {
-            if shouldResolve {
-                _ = try? apply()
-                shouldResolve = false
-            }
-        }
-        let status = try resolveStatus()
+    private func applyAndScheduleNextBoundary() {
+        _ = try? apply()
+        let status = try? resolveStatus()
         let delay: TimeInterval
-        if status.deferredByTemporaryState {
+        if status?.deferredByTemporaryState == true {
             delay = 2
-        } else if let boundary = status.nextBoundary {
+        } else if let boundary = status?.nextBoundary {
             delay = max(1, min(boundary.timeIntervalSinceNow + 0.5, 3600))
         } else {
             delay = 3600
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(delay))
-        shouldResolve = true
+
+        timer?.invalidate()
+        let nextTimer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            self?.applyAndScheduleNextBoundary()
+        }
+        timer = nextTimer
+        RunLoop.current.add(nextTimer, forMode: .common)
     }
+
+    deinit {
+        let center = NotificationCenter.default
+        for observer in observers {
+            center.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        timer?.invalidate()
+    }
+}
+
+private func runLoop() throws {
+    let scheduler = SchedulerRunLoop()
+    scheduler.start()
+    RunLoop.current.run()
 }
 
 let arguments = CommandLine.arguments
@@ -215,8 +245,7 @@ let command = arguments.count > 1 ? arguments[1] : "status"
 do {
     switch command {
     case "init-default":
-        let value = try defaultSchedule()
-        try saveSchedule(value)
+        _ = try loadSchedule()
         print(scheduleURL.path)
     case "show":
         try printJSON(loadSchedule())

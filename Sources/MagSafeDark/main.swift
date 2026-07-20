@@ -106,7 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
         registerSystemNotifications()
 
-        if defaults.bool(forKey: restoreModeKey), let mode = defaults.string(forKey: rememberedModeKey) {
+        if !scheduleEnabled,
+           defaults.bool(forKey: restoreModeKey),
+           let mode = defaults.string(forKey: rememberedModeKey) {
             executeState(mode, remember: false)
         } else {
             requestRefresh(force: true)
