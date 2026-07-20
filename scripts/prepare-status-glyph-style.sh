@@ -85,12 +85,16 @@ else:
         'text("Лампочка", "Lightbulb")',
     )
 
-# For battery.100percent.bolt, the second palette layer is the battery body.
-# Put the LED state color there and leave the bolt in the normal label color.
-text = text.replace(
+# Verified with SF Symbols on macOS: palette layers are bolt, outline/terminal, inner fill.
+# Keep the bolt muted, the outline system-colored, and color only the battery interior.
+for old_palette in [
     'paletteColors: [fillColor, NSColor.labelColor]',
     'paletteColors: [NSColor.labelColor, fillColor]',
-)
+]:
+    text = text.replace(
+        old_palette,
+        'paletteColors: [NSColor.secondaryLabelColor, NSColor.labelColor, fillColor]',
+    )
 
 plug_method_anchor = '''    private func configuredPlugSymbol() -> NSImage? {
 '''
@@ -176,14 +180,14 @@ for marker in [
     '#selector(useBatteryStatusGlyph)',
     '#selector(useLightbulbStatusGlyph)',
     'statusGlyphStyle == .battery && kind == .plugged',
-    'paletteColors: [NSColor.labelColor, fillColor]',
+    'paletteColors: [NSColor.secondaryLabelColor, NSColor.labelColor, fillColor]',
 ]:
     if marker not in text:
         raise SystemExit(f'Missing status glyph marker: {marker}')
 
 if text != original:
     path.write_text(text)
-    print('Prepared selectable battery and lightbulb status icons; battery body uses the LED color')
+    print('Prepared selectable battery and lightbulb status icons; battery interior uses the LED color')
 else:
     print('Selectable status icon style already prepared')
 PY
