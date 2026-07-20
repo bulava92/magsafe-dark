@@ -40,11 +40,6 @@ zsh ./scripts/test-schedule-editor-layout.sh
 zsh ./scripts/test-codex-led.sh
 zsh ./scripts/test-cli-settings.sh
 zsh ./scripts/test-launchdaemon-layout.sh
-zsh ./scripts/prepare-gui-daemon-transport.sh
-zsh ./scripts/prepare-battery-status-icon.sh >/dev/null
-zsh ./scripts/prepare-native-power-status.sh >/dev/null
-zsh ./scripts/prepare-boring-battery-design.sh
-zsh ./scripts/prepare-schedule-sources.sh
 swift build
 swift build -c release
 zsh ./scripts/test-helper-interface.sh
