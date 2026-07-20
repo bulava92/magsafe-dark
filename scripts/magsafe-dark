@@ -1,203 +1,270 @@
 #!/bin/zsh
 set -euo pipefail
 
-HELPER="/usr/local/libexec/magsafe-led-helper"
-STATE_DIR="${TMPDIR:-/tmp}/magsafe-dark-${UID}"
+HELPER="${MAGSAFE_DARK_HELPER:-/usr/local/libexec/magsafe-led-client}"
+SUDO_BIN="${MAGSAFE_DARK_SUDO:-none}"
+APP_SUPPORT="${MAGSAFE_DARK_APP_SUPPORT:-${HOME}/Library/Application Support/MagSafe Dark}"
+LOG_DIR="${MAGSAFE_DARK_LOG_DIR:-${HOME}/Library/Logs/MagSafe Dark}"
+STATE_DIR="${APP_SUPPORT}/State"
 RESET_PID="$STATE_DIR/reset.pid"
 TEMP_STATE="$STATE_DIR/temporary.state"
+LOCK_DIR="$STATE_DIR/lock"
+LOCK_OWNER="$LOCK_DIR/pid"
+LOG_FILE="$LOG_DIR/magsafe-dark.log"
 DEFAULTS_DOMAIN="su.xyz.MagSafeDark"
+MAX_LOG_BYTES=$((1024 * 1024))
 
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+chmod 700 "$APP_SUPPORT" "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
 
-read_default() {
-  /usr/bin/defaults read "$DEFAULTS_DOMAIN" "$1" 2>/dev/null || true
+rotate_log() {
+  [[ -f "$LOG_FILE" ]] || return 0
+  local size
+  size=$(stat -f '%z' "$LOG_FILE" 2>/dev/null || print 0)
+  if (( size >= MAX_LOG_BYTES )); then mv -f "$LOG_FILE" "$LOG_FILE.1"; fi
 }
 
+log_event() {
+  rotate_log
+  printf '%s\tpid=%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$$" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+read_default() { /usr/bin/defaults read "$DEFAULTS_DOMAIN" "$1" 2>/dev/null || true; }
+
+WORKING_MODE="${MAGSAFE_DARK_WORKING_MODE:-$(read_default codexWorkingMode)}"
+SUCCESS_MODE="${MAGSAFE_DARK_SUCCESS_MODE:-$(read_default codexSuccessMode)}"
+ERROR_MODE="${MAGSAFE_DARK_ERROR_MODE:-$(read_default codexErrorMode)}"
 SUCCESS_SECONDS="${MAGSAFE_DARK_SUCCESS_SECONDS:-$(read_default codexSuccessSeconds)}"
 ERROR_SECONDS="${MAGSAFE_DARK_ERROR_SECONDS:-$(read_default codexErrorSeconds)}"
-NOTIFICATIONS="${MAGSAFE_DARK_NOTIFICATIONS:-$(read_default codexNotifications)}"
+SUCCESS_NOTIFICATIONS="${MAGSAFE_DARK_SUCCESS_NOTIFICATIONS:-$(read_default codexSuccessNotifications)}"
+ERROR_NOTIFICATIONS="${MAGSAFE_DARK_ERROR_NOTIFICATIONS:-$(read_default codexErrorNotifications)}"
+LEGACY_NOTIFICATIONS="${MAGSAFE_DARK_NOTIFICATIONS:-$(read_default codexNotifications)}"
+WORKING_MODE="${WORKING_MODE:-orange}"
+SUCCESS_MODE="${SUCCESS_MODE:-green}"
+ERROR_MODE="${ERROR_MODE:-orange}"
 SUCCESS_SECONDS="${SUCCESS_SECONDS:-5}"
 ERROR_SECONDS="${ERROR_SECONDS:-5}"
-NOTIFICATIONS="${NOTIFICATIONS:-1}"
+SUCCESS_NOTIFICATIONS="${SUCCESS_NOTIFICATIONS:-${LEGACY_NOTIFICATIONS:-1}}"
+ERROR_NOTIFICATIONS="${ERROR_NOTIFICATIONS:-${LEGACY_NOTIFICATIONS:-1}}"
 
 usage() {
   cat <<'EOF'
 Usage: magsafe-dark <command> [arguments]
 
 States:
-  working                 Orange while a task is running
-  success                 Green, then system mode after a delay
-  error                   Orange, then system mode after a delay
-  idle                    Restore system-controlled mode
-
-Direct LED modes:
-  off | system | green | orange
-  flash                   Single error indication
-  blink-slow              Slow orange blinking
-  blink-fast              Fast orange blinking
-  blink-off               Blink orange, then switch off
-  status                  Print the raw ACLC value
-
+  working | success | error | idle
+Direct modes:
+  off | system | green | orange | flash | blink-slow | blink-fast | blink-off
+  status | probe
 Timers:
-  for <seconds> <mode>     Set a mode temporarily, then restore system mode
-  timer-status             Print remaining timer seconds, or nothing
-  cancel-timer             Cancel timer and restore system mode
-  temporary-active         Exit 0 while a timer or automation state is active
-
+  for <seconds> <mode> | timer-status | timer-end | cancel-timer | temporary-active
+Diagnostics:
+  state | settings | diagnostics | log-path
 Command runner:
-  run [--working MODE] [--success MODE] [--error MODE] [--delay SEC] -- COMMAND...
+  run [--working MODE] [--success MODE] [--error MODE]
+      [--delay SEC] [--success-delay SEC] [--error-delay SEC] -- COMMAND...
 EOF
 }
 
-clear_state() {
-  rm -f "$TEMP_STATE"
+valid_mode() { case "$1" in off|system|green|orange|flash|blink-slow|blink-fast|blink-off) return 0;; *) return 1;; esac; }
+valid_seconds() { [[ "$1" == <-> ]] && (( $1 >= 0 && $1 <= 604800 )); }
+valid_bool() { [[ "$1" == "0" || "$1" == "1" ]]; }
+
+validate_settings() {
+  valid_mode "$WORKING_MODE" || { print -u2 "Invalid working mode: $WORKING_MODE"; return 78; }
+  valid_mode "$SUCCESS_MODE" || { print -u2 "Invalid success mode: $SUCCESS_MODE"; return 78; }
+  valid_mode "$ERROR_MODE" || { print -u2 "Invalid error mode: $ERROR_MODE"; return 78; }
+  valid_seconds "$SUCCESS_SECONDS" || { print -u2 "Invalid success duration: $SUCCESS_SECONDS"; return 78; }
+  valid_seconds "$ERROR_SECONDS" || { print -u2 "Invalid error duration: $ERROR_SECONDS"; return 78; }
+  valid_bool "$SUCCESS_NOTIFICATIONS" || { print -u2 "Invalid success notification setting: $SUCCESS_NOTIFICATIONS"; return 78; }
+  valid_bool "$ERROR_NOTIFICATIONS" || { print -u2 "Invalid error notification setting: $ERROR_NOTIFICATIONS"; return 78; }
 }
 
-cancel_reset() {
+remove_stale_lock() {
+  [[ -d "$LOCK_DIR" ]] || return 0
+  local owner=""
+  [[ -f "$LOCK_OWNER" ]] && owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
+  if [[ -z "$owner" ]] || ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCK_DIR" 2>/dev/null || true; fi
+}
+
+with_lock() {
+  local attempts=0
+  remove_stale_lock
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    sleep 0.02
+    attempts=$(( attempts + 1 ))
+    if (( attempts >= 250 )); then log_event "lock-timeout command=${1:-unknown}"; print -u2 "Could not acquire state lock"; return 75; fi
+    (( attempts % 50 == 0 )) && remove_stale_lock
+  done
+  print "$$" > "$LOCK_OWNER"
+  "$@"
+  local code=$?
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  return "$code"
+}
+
+run_helper() {
+  if [[ "$SUDO_BIN" == "none" ]]; then "$HELPER" "$@"; else "$SUDO_BIN" -n "$HELPER" "$@"; fi
+}
+set_mode() { local mode="$1"; run_helper "$mode" >/dev/null; log_event "set-mode mode=$mode"; }
+raw_mode() { run_helper status 2>/dev/null; }
+mode_from_raw() { case "$1" in 1) print off;; 3) print green;; 4) print orange;; 5) print flash;; 6) print blink-slow;; 7) print blink-fast;; 19) print blink-off;; 0) print system;; *) print unavailable;; esac; }
+current_mode_name() { mode_from_raw "$(raw_mode)"; }
+clear_state() { rm -f "$TEMP_STATE"; }
+
+cancel_worker() {
   if [[ -f "$RESET_PID" ]]; then
-    local pid
-    pid="$(cat "$RESET_PID" 2>/dev/null || true)"
+    local pid="$(cat "$RESET_PID" 2>/dev/null || true)"
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     rm -f "$RESET_PID"
   fi
-  clear_state
 }
+cancel_and_clear() { cancel_worker; clear_state; }
 
-set_mode() { sudo -n "$HELPER" "$1" >/dev/null; }
+read_state() {
+  [[ -f "$TEMP_STATE" ]] || return 1
+  IFS=$'\t' read -r STATE_KIND STATE_END STATE_MODE STATE_RESTORE < "$TEMP_STATE" || return 1
+  [[ -n "${STATE_KIND:-}" && -n "${STATE_END:-}" && -n "${STATE_MODE:-}" ]] || return 1
+  [[ "$STATE_END" == <-> ]] || return 1
+  valid_mode "$STATE_MODE" || return 1
+  [[ -n "${STATE_RESTORE:-}" ]] || STATE_RESTORE=system
+  valid_mode "$STATE_RESTORE" || STATE_RESTORE=system
+}
 
 write_state() {
-  local kind="$1" end="$2" mode="$3"
-  printf '%s\t%s\t%s\n' "$kind" "$end" "$mode" > "$TEMP_STATE"
+  local kind="$1" end="$2" mode="$3" restore="$4" temporary="$TEMP_STATE.tmp.$$"
+  printf '%s\t%s\t%s\t%s\n' "$kind" "$end" "$mode" "$restore" > "$temporary"
+  chmod 600 "$temporary" 2>/dev/null || true
+  mv -f "$temporary" "$TEMP_STATE"
+  log_event "write-state kind=$kind end=$end mode=$mode restore=$restore"
 }
 
-schedule_system() {
-  local seconds="$1" kind="${2:-automation}" mode="${3:-system}"
-  local end=$(( $(date +%s) + seconds ))
-  write_state "$kind" "$end" "$mode"
-  (
-    sleep "$seconds"
-    sudo -n "$HELPER" system >/dev/null 2>&1 || true
-    rm -f "$RESET_PID" "$TEMP_STATE"
-  ) >/dev/null 2>&1 &
+restore_and_clear() {
+  local restore=system
+  if read_state; then restore="$STATE_RESTORE"; fi
+  cancel_worker; clear_state; set_mode "$restore"; log_event "restore mode=$restore"
+}
+
+begin_temporary() {
+  local kind="$1" seconds="$2" mode="$3" restore
+  if read_state; then restore="$STATE_RESTORE"; else restore="$(current_mode_name)"; fi
+  [[ "$restore" == unavailable ]] && restore=system
+  cancel_worker; set_mode "$mode"
+  local end=0
+  (( seconds > 0 )) && end=$(( $(date +%s) + seconds ))
+  write_state "$kind" "$end" "$mode" "$restore"
+}
+
+schedule_restore() {
+  local seconds="$1"
+  if (( seconds == 0 )); then with_lock restore_and_clear >/dev/null 2>&1 || true; return 0; fi
+  ( sleep "$seconds"; with_lock restore_and_clear >/dev/null 2>&1 || true ) >/dev/null 2>&1 &
   echo $! > "$RESET_PID"
 }
 
 state_is_active() {
-  [[ -f "$TEMP_STATE" ]] || return 1
-  local kind end mode now
-  IFS=$'\t' read -r kind end mode < "$TEMP_STATE" || return 1
-  now=$(date +%s)
-  if [[ "$end" == "0" || "$end" -gt "$now" ]]; then
-    return 0
-  fi
-  rm -f "$TEMP_STATE" "$RESET_PID"
+  read_state || return 1
+  local now=$(date +%s)
+  if [[ "$STATE_END" == "0" || "$STATE_END" -gt "$now" ]]; then return 0; fi
+  with_lock restore_and_clear >/dev/null 2>&1 || true
   return 1
 }
 
-notify() {
-  [[ "$NOTIFICATIONS" == "1" ]] || return 0
-  /usr/bin/osascript -e "display notification \"$2\" with title \"MagSafe Dark\" subtitle \"$1\"" >/dev/null 2>&1 || true
+recover_state_on_start() {
+  if [[ -f "$TEMP_STATE" ]] && ! read_state; then log_event "invalid-state-file path=$TEMP_STATE"; rm -f "$TEMP_STATE" "$RESET_PID"; return 0; fi
+  read_state || return 0
+  if [[ "$STATE_END" != "0" && "$STATE_END" -le "$(date +%s)" ]]; then with_lock restore_and_clear >/dev/null 2>&1 || true; return 0; fi
+  if [[ "$STATE_END" != "0" ]]; then local remaining=$(( STATE_END - $(date +%s) )); cancel_worker; schedule_restore "$remaining"; fi
 }
 
-valid_mode() {
-  case "$1" in
-    off|system|green|orange|flash|blink-slow|blink-fast|blink-off) return 0 ;;
-    *) return 1 ;;
-  esac
+notify_success() { [[ "$SUCCESS_NOTIFICATIONS" == "1" ]] || return 0; /usr/bin/osascript -e 'display notification "Success" with title "MagSafe Dark" subtitle "Command completed"' >/dev/null 2>&1 || true; }
+notify_error() { local code="$1"; [[ "$ERROR_NOTIFICATIONS" == "1" ]] || return 0; /usr/bin/osascript -e "display notification \"Error, code $code\" with title \"MagSafe Dark\" subtitle \"Command completed\"" >/dev/null 2>&1 || true; }
+
+print_state() {
+  if state_is_active; then
+    print "kind=$STATE_KIND"; print "mode=$STATE_MODE"; print "restore=$STATE_RESTORE"; print "end=$STATE_END"
+    if [[ "$STATE_END" != "0" ]]; then local remaining=$(( STATE_END - $(date +%s) )); (( remaining < 0 )) && remaining=0; print "remaining=$remaining"; else print "remaining=indefinite"; fi
+  else print inactive; fi
+}
+print_settings() {
+  print "working_mode=$WORKING_MODE"; print "success_mode=$SUCCESS_MODE"; print "error_mode=$ERROR_MODE"
+  print "success_seconds=$SUCCESS_SECONDS"; print "error_seconds=$ERROR_SECONDS"
+  print "success_notifications=$SUCCESS_NOTIFICATIONS"; print "error_notifications=$ERROR_NOTIFICATIONS"
+}
+print_diagnostics() {
+  local helper_status=missing daemon_status=unavailable raw=unavailable probe_status=unavailable
+  if [[ -x "$HELPER" ]]; then
+    helper_status=installed
+    daemon_status="$(run_helper ping 2>/dev/null || print unavailable)"
+    probe_status="$(run_helper probe 2>/dev/null || print unsupported)"
+    raw="$(run_helper status 2>/dev/null || print unavailable)"
+  fi
+  print "transport=launchdaemon"
+  print "client=$helper_status"
+  print "client_path=$HELPER"
+  print "daemon=$daemon_status"
+  print "compatibility=$probe_status"
+  print "raw_aclc=$raw"
+  print "effective_mode=$(mode_from_raw "$raw")"
+  print "state_file=$TEMP_STATE"; print "log_file=$LOG_FILE"
+  print_settings; print_state
+}
+
+finish_command() {
+  local code="$1" success="$2" failure="$3" success_delay="$4" error_delay="$5" result_mode delay
+  if (( code == 0 )); then result_mode="$success"; delay="$success_delay"; set_mode "$result_mode"; notify_success
+  else result_mode="$failure"; delay="$error_delay"; set_mode "$result_mode"; notify_error "$code"; fi
+  if read_state; then write_state automation "$(( $(date +%s) + delay ))" "$result_mode" "$STATE_RESTORE"; fi
+  log_event "run-complete code=$code mode=$result_mode delay=$delay"; schedule_restore "$delay"
 }
 
 run_command() {
-  local working="orange" success="green" failure="orange" delay="$SUCCESS_SECONDS"
+  local working="$WORKING_MODE" success="$SUCCESS_MODE" failure="$ERROR_MODE" success_delay="$SUCCESS_SECONDS" error_delay="$ERROR_SECONDS"
   shift
   while (( $# )); do
     case "$1" in
-      --working) working="$2"; shift 2 ;;
-      --success) success="$2"; shift 2 ;;
-      --error) failure="$2"; shift 2 ;;
-      --delay) delay="$2"; shift 2 ;;
-      --) shift; break ;;
-      *) print -u2 "Unknown run option: $1"; exit 64 ;;
+      --working) (( $# >= 2 )) || return 64; working="$2"; shift 2;;
+      --success) (( $# >= 2 )) || return 64; success="$2"; shift 2;;
+      --error) (( $# >= 2 )) || return 64; failure="$2"; shift 2;;
+      --delay) (( $# >= 2 )) || return 64; success_delay="$2"; error_delay="$2"; shift 2;;
+      --success-delay) (( $# >= 2 )) || return 64; success_delay="$2"; shift 2;;
+      --error-delay) (( $# >= 2 )) || return 64; error_delay="$2"; shift 2;;
+      --) shift; break;;
+      *) print -u2 "Unknown run option: $1"; return 64;;
     esac
   done
-  (( $# )) || { print -u2 "Missing command after --"; exit 64; }
-  valid_mode "$working" && valid_mode "$success" && valid_mode "$failure" || {
-    print -u2 "Invalid LED mode for run command"; exit 64
-  }
-
-  cancel_reset
-  set_mode "$working"
-  write_state automation 0 "$working"
-  set +e
-  "$@"
-  local code=$?
-  set -e
-  if (( code == 0 )); then
-    set_mode "$success"
-    notify "Command completed" "Success"
-  else
-    set_mode "$failure"
-    notify "Command completed" "Error, code $code"
-  fi
-  schedule_system "$delay" automation "${code}:${success}:${failure}"
+  (( $# )) || { print -u2 "Missing command after --"; return 64; }
+  valid_mode "$working" && valid_mode "$success" && valid_mode "$failure" || { print -u2 "Invalid LED mode for run command"; return 64; }
+  valid_seconds "$success_delay" && valid_seconds "$error_delay" || { print -u2 "Delay must be 0...604800"; return 64; }
+  with_lock begin_temporary automation 0 "$working"
+  trap 'with_lock restore_and_clear >/dev/null 2>&1 || true; exit 130' INT TERM HUP
+  set +e; "$@"; local code=$?; set -e
+  finish_command "$code" "$success" "$failure" "$success_delay" "$error_delay"
+  trap - INT TERM HUP
   return "$code"
 }
 
-[[ -x "$HELPER" ]] || {
-  print -u2 "MagSafe Dark helper is not installed. Run ./install.sh first."
-  exit 127
-}
-
+[[ -x "$HELPER" ]] || { print -u2 "MagSafe Dark client is not installed. Run ./install.sh first."; exit 127; }
+validate_settings
+recover_state_on_start
 command="${1:-}"
 case "$command" in
-  working)
-    cancel_reset; set_mode orange; write_state automation 0 orange
-    ;;
-  success)
-    cancel_reset; set_mode green; notify "Codex" "Task completed"; schedule_system "$SUCCESS_SECONDS" automation green
-    ;;
-  error)
-    cancel_reset; set_mode orange; notify "Codex" "Task failed"; schedule_system "$ERROR_SECONDS" automation orange
-    ;;
-  idle|system)
-    cancel_reset; set_mode system
-    ;;
-  off|green|orange|flash|blink-slow|blink-fast|blink-off)
-    cancel_reset; set_mode "$command"
-    ;;
-  status)
-    sudo -n "$HELPER" status
-    ;;
-  for)
-    seconds="${2:-}"; mode="${3:-}"
-    [[ "$seconds" == <-> ]] || { print -u2 "Seconds must be an integer"; exit 64; }
-    valid_mode "$mode" || { print -u2 "Unknown mode: $mode"; exit 64; }
-    cancel_reset; set_mode "$mode"; schedule_system "$seconds" timer "$mode"
-    ;;
-  timer-status)
-    if state_is_active; then
-      IFS=$'\t' read -r kind end mode < "$TEMP_STATE"
-      if [[ "$kind" == "timer" ]]; then
-        now=$(date +%s)
-        remaining=$(( end - now ))
-        (( remaining < 0 )) && remaining=0
-        print "$remaining"
-      fi
-    fi
-    ;;
-  temporary-active)
-    state_is_active
-    ;;
-  cancel-timer)
-    if state_is_active; then
-      IFS=$'\t' read -r kind end mode < "$TEMP_STATE"
-      [[ "$kind" == "timer" ]] || exit 0
-    fi
-    cancel_reset
-    set_mode system
-    ;;
-  run)
-    run_command "$@"
-    ;;
-  -h|--help|help|"") usage ;;
-  *) print -u2 "Unknown command: $command"; usage >&2; exit 64 ;;
+  working) with_lock begin_temporary automation 0 "$WORKING_MODE";;
+  success) if ! state_is_active; then with_lock begin_temporary automation "$SUCCESS_SECONDS" "$SUCCESS_MODE"; else set_mode "$SUCCESS_MODE"; fi; notify_success; if read_state; then write_state automation "$(( $(date +%s) + SUCCESS_SECONDS ))" "$SUCCESS_MODE" "$STATE_RESTORE"; fi; schedule_restore "$SUCCESS_SECONDS";;
+  error) if ! state_is_active; then with_lock begin_temporary automation "$ERROR_SECONDS" "$ERROR_MODE"; else set_mode "$ERROR_MODE"; fi; notify_error 1; if read_state; then write_state automation "$(( $(date +%s) + ERROR_SECONDS ))" "$ERROR_MODE" "$STATE_RESTORE"; fi; schedule_restore "$ERROR_SECONDS";;
+  idle) with_lock restore_and_clear;;
+  system|off|green|orange|flash|blink-slow|blink-fast|blink-off) with_lock cancel_and_clear; set_mode "$command";;
+  status|probe) run_helper "$command";;
+  for) seconds="${2:-}"; mode="${3:-}"; [[ "$seconds" == <-> ]] || { print -u2 "Seconds must be an integer"; exit 64; }; (( seconds > 0 && seconds <= 604800 )) || { print -u2 "Seconds must be between 1 and 604800"; exit 64; }; valid_mode "$mode" || { print -u2 "Unknown mode: $mode"; exit 64; }; with_lock begin_temporary timer "$seconds" "$mode"; schedule_restore "$seconds";;
+  timer-status) if state_is_active && [[ "$STATE_KIND" == timer ]]; then now=$(date +%s); remaining=$(( STATE_END - now )); (( remaining < 0 )) && remaining=0; print "$remaining"; fi;;
+  timer-end) if state_is_active && [[ "$STATE_KIND" == timer ]]; then print "$STATE_END"; fi;;
+  temporary-active) state_is_active;;
+  cancel-timer) if state_is_active && [[ "$STATE_KIND" == timer ]]; then with_lock restore_and_clear; fi;;
+  state) print_state;;
+  settings) print_settings;;
+  diagnostics) print_diagnostics;;
+  log-path) print "$LOG_FILE";;
+  run) run_command "$@";;
+  -h|--help|help|"") usage;;
+  *) print -u2 "Unknown command: $command"; usage >&2; exit 64;;
 esac

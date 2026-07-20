@@ -3,24 +3,95 @@ set -u
 
 MAGSAFE_DARK_BIN="${MAGSAFE_DARK_BIN:-/usr/local/bin/magsafe-dark}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || true)}"
+TASK_ROOT="${MAGSAFE_DARK_TASK_ROOT:-${HOME}/Library/Application Support/MagSafe Dark/Tasks}"
+LOCK_DIR="$TASK_ROOT/lock"
+TASK_ID="${MAGSAFE_DARK_TASK_ID:-$$-$(date +%s)-$RANDOM}"
+TASK_FILE="$TASK_ROOT/$TASK_ID.task"
+RESULT_FILE="$TASK_ROOT/last-result"
 
+if [[ ! -x "$MAGSAFE_DARK_BIN" ]]; then
+  print -u2 "magsafe-dark executable was not found: $MAGSAFE_DARK_BIN"
+  exit 127
+fi
 if [[ -z "$CODEX_BIN" || ! -x "$CODEX_BIN" ]]; then
   print -u2 "codex executable was not found. Set CODEX_BIN or install Codex CLI."
   exit 127
 fi
 
-"$MAGSAFE_DARK_BIN" working
+mkdir -p "$TASK_ROOT"
+chmod 700 "$TASK_ROOT" 2>/dev/null || true
+
+remove_stale_lock() {
+  [[ -d "$LOCK_DIR" ]] || return 0
+  local owner=""
+  [[ -f "$LOCK_DIR/pid" ]] && owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -z "$owner" ]] || ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCK_DIR" 2>/dev/null || true; fi
+}
+
+with_lock() {
+  local attempts=0
+  remove_stale_lock
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    sleep 0.02
+    attempts=$(( attempts + 1 ))
+    (( attempts < 250 )) || return 75
+    (( attempts % 50 == 0 )) && remove_stale_lock
+  done
+  print "$$" > "$LOCK_DIR/pid"
+  "$@"
+  local code=$?
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  return "$code"
+}
+
+cleanup_stale_tasks() {
+  setopt local_options null_glob
+  local file pid
+  for file in "$TASK_ROOT"/*.task; do
+    IFS=$'\t' read -r pid _ _ < "$file" 2>/dev/null || pid=""
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$file"; fi
+  done
+}
+
+active_task_count() {
+  cleanup_stale_tasks
+  setopt local_options null_glob
+  local files=("$TASK_ROOT"/*.task)
+  print ${#files[@]}
+}
+
+register_task() {
+  local before
+  before="$(active_task_count)"
+  printf '%s\t%s\trunning\n' "$$" "$(date +%s)" > "$TASK_FILE"
+  chmod 600 "$TASK_FILE" 2>/dev/null || true
+  if (( before == 0 )); then "$MAGSAFE_DARK_BIN" working || true; fi
+}
+
+finish_task() {
+  local exit_code="$1"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$TASK_ID" "$exit_code" > "$RESULT_FILE.tmp.$$"
+  mv -f "$RESULT_FILE.tmp.$$" "$RESULT_FILE"
+  rm -f "$TASK_FILE"
+  local remaining
+  remaining="$(active_task_count)"
+  if (( remaining == 0 )); then
+    local recorded_code="$exit_code"
+    if [[ -f "$RESULT_FILE" ]]; then IFS=$'\t' read -r _ _ recorded_code < "$RESULT_FILE" || recorded_code="$exit_code"; fi
+    rm -f "$RESULT_FILE"
+    if (( recorded_code == 0 )); then "$MAGSAFE_DARK_BIN" success || true; else "$MAGSAFE_DARK_BIN" error || true; fi
+  fi
+}
+
+with_lock register_task || {
+  print -u2 "Could not register Codex LED task"
+  exit 75
+}
 
 cleanup() {
   local exit_code=$?
   trap - EXIT INT TERM HUP
-
-  if (( exit_code == 0 )); then
-    "$MAGSAFE_DARK_BIN" success || true
-  else
-    "$MAGSAFE_DARK_BIN" error || true
-  fi
-
+  with_lock finish_task "$exit_code" || true
   exit "$exit_code"
 }
 
