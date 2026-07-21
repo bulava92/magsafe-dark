@@ -614,6 +614,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func currentModeTitle(_ mode: UInt8?) -> String {
+        if cachedOnACPower == false {
+            return text("Питание отключено", "Power disconnected")
+        }
         let base = text("Текущий режим: \(modeName(mode))", "Current mode: \(modeName(mode))")
         if cachedTemporaryActive {
             if let end = cachedTimerEnd {
@@ -731,22 +734,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let symbolName = "lightbulb.led.fill"
         let base = NSImage.SymbolConfiguration(pointSize: 17, weight: .regular)
         let indicatorColor: NSColor
-        switch mode {
-        case 1:
+        if cachedOnACPower == false {
             indicatorColor = .tertiaryLabelColor
-        case 3:
-            indicatorColor = .systemGreen
-        case 4, 5, 6, 7, 19:
-            indicatorColor = .systemOrange
-        default:
-            indicatorColor = .labelColor
+        } else {
+            switch mode {
+            case 1:
+                indicatorColor = .tertiaryLabelColor
+            case 3:
+                indicatorColor = .systemGreen
+            case 4, 5, 6, 7, 19:
+                indicatorColor = .systemOrange
+            default:
+                indicatorColor = .labelColor
+            }
         }
         let palette = NSImage.SymbolConfiguration(
             paletteColors: [indicatorColor, NSColor.secondaryLabelColor]
         )
+        let description = cachedOnACPower == false
+            ? text("Питание MagSafe отключено", "MagSafe power disconnected")
+            : text("Состояние индикатора MagSafe: \(modeName(mode))", "MagSafe LED state: \(modeName(mode))")
         let image = NSImage(
             systemSymbolName: symbolName,
-            accessibilityDescription: text("Состояние индикатора MagSafe: \(modeName(mode))", "MagSafe LED state: \(modeName(mode))")
+            accessibilityDescription: description
         )?.withSymbolConfiguration(base.applying(palette)) ?? NSImage(size: NSSize(width: 19, height: 18))
         image.isTemplate = false
         return image
