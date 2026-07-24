@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
     private var appearanceObservation: NSKeyValueObservation?
     private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var pendingPowerScheduleApply: DispatchWorkItem?
     private var refreshInFlight = false
     private var menuIsOpen = false
     private var cachedMode: UInt8?
@@ -232,6 +233,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             cachedChargeCompletion = nil
         }
         updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
+        updateOpenMenu(mode: cachedMode, remaining: cachedTimerRemaining)
+
+        if onACPower && scheduleEnabled {
+            pendingPowerScheduleApply?.cancel()
+            let applySchedule = { [weak self] in
+                guard let self else { return }
+                self.commandQueue.async {
+                    _ = self.run(self.automationCLI, ["schedule", "apply"])
+                    DispatchQueue.main.async {
+                        self.requestRefresh(force: true)
+                    }
+                }
+            }
+            applySchedule()
+
+            let delayedApply = DispatchWorkItem { [weak self] in
+                guard let self, self.cachedOnACPower == true, self.scheduleEnabled else { return }
+                applySchedule()
+            }
+            pendingPowerScheduleApply = delayedApply
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: delayedApply)
+        }
     }
 
     private func registerSystemNotifications() {
@@ -558,7 +581,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             var snapshot = self.readSnapshot()
 
-            if !snapshot.temporary,
+            if !self.scheduleEnabled,
+               !snapshot.temporary,
                let remembered = self.defaults.string(forKey: self.rememberedModeKey),
                remembered != "system",
                let expected = self.expectedValue(for: remembered),

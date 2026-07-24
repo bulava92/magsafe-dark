@@ -116,6 +116,14 @@ if 'private var powerSourceRunLoopSource: CFRunLoopSource?' not in text:
         1,
     )
 
+if 'private var pendingPowerScheduleApply: DispatchWorkItem?' not in text:
+    text = text.replace(
+        '    private var powerSourceRunLoopSource: CFRunLoopSource?\n',
+        '    private var powerSourceRunLoopSource: CFRunLoopSource?\n'
+        '    private var pendingPowerScheduleApply: DispatchWorkItem?\n',
+        1,
+    )
+
 if 'installNativePowerSourceObserver()' not in text:
     text = text.replace(
         '        installAppearanceObserver()\n',
@@ -182,6 +190,28 @@ native_methods = r'''    private func installNativePowerSourceObserver() {
             cachedChargeCompletion = nil
         }
         updateStatusIcon(mode: cachedMode, remaining: cachedTimerRemaining)
+        updateOpenMenu(mode: cachedMode, remaining: cachedTimerRemaining)
+
+        if onACPower && scheduleEnabled {
+            pendingPowerScheduleApply?.cancel()
+            let applySchedule = { [weak self] in
+                guard let self else { return }
+                self.commandQueue.async {
+                    _ = self.run(self.automationCLI, ["schedule", "apply"])
+                    DispatchQueue.main.async {
+                        self.requestRefresh(force: true)
+                    }
+                }
+            }
+            applySchedule()
+
+            let delayedApply = DispatchWorkItem { [weak self] in
+                guard let self, self.cachedOnACPower == true, self.scheduleEnabled else { return }
+                applySchedule()
+            }
+            pendingPowerScheduleApply = delayedApply
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: delayedApply)
+        }
     }
 
 '''
