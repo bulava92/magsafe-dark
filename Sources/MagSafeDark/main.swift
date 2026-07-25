@@ -403,6 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         english.state = language == .en ? .on : .off
         languages.addItem(english)
         settings.addItem(submenu(text("Язык", "Language"), languages))
+        settings.addItem(.separator())
+        settings.addItem(item(text("Скрыть значок в строке меню…", "Hide menu bar icon…"), #selector(hideMenuBarIcon)))
 
         let scheduleToggle = item(text("Расписание включено", "Schedule enabled"), #selector(toggleSchedule))
         scheduleToggle.state = scheduleEnabled ? .on : .off
@@ -1262,37 +1264,166 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func hideMenuBarIcon() {
+        let alert = NSAlert()
+        alert.messageText = text("Скрыть значок в строке меню?", "Hide menu bar icon?")
+        alert.informativeText = text(
+            "Интерфейс MagSafe Dark закроется, но фоновые службы и расписание продолжат работать. Чтобы вернуть значок, снова запустите MagSafe Dark из папки «Программы».",
+            "The MagSafe Dark interface will close, but background services and schedules will continue working. Launch MagSafe Dark again from Applications to restore the icon."
+        )
+        alert.addButton(withTitle: text("Скрыть", "Hide"))
+        alert.addButton(withTitle: text("Отмена", "Cancel"))
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        NSApp.terminate(nil)
+    }
+
     @objc private func checkUpdates() {
         let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         guard let url = URL(string: "https://api.github.com/repos/bulava92/magsafe-dark/releases/latest") else { return }
         var request = URLRequest(url: url)
         request.setValue("MagSafeDark/\(current)", forHTTPHeaderField: "User-Agent")
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self else { return }
             if let error {
-                DispatchQueue.main.async { self.alert(self.text("Проверка обновлений", "Update check"), error.localizedDescription) }
+                DispatchQueue.main.async {
+                    self.alert(self.text("Проверка обновлений", "Update check"), error.localizedDescription)
+                }
                 return
             }
-            guard let data,
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let data,
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tag = object["tag_name"] as? String else {
-                DispatchQueue.main.async { self.alert(self.text("Проверка обновлений", "Update check"), self.text("Не удалось прочитать ответ GitHub.", "Could not read the GitHub response.")) }
+                DispatchQueue.main.async {
+                    self.alert(
+                        self.text("Проверка обновлений", "Update check"),
+                        self.text("Не удалось прочитать ответ GitHub.", "Could not read the GitHub response.")
+                    )
+                }
                 return
             }
+
             let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+            let releaseURL = (object["html_url"] as? String).flatMap(URL.init(string:))
+            let assets = object["assets"] as? [[String: Any]] ?? []
+            let packageAssets = assets.compactMap { asset -> (name: String, url: URL)? in
+                guard let name = asset["name"] as? String,
+                      name.lowercased().hasSuffix(".pkg"),
+                      let rawURL = asset["browser_download_url"] as? String,
+                      let url = URL(string: rawURL) else { return nil }
+                return (name, url)
+            }
+            let package = packageAssets.first {
+                $0.name.localizedCaseInsensitiveContains(latest)
+            } ?? packageAssets.first
+
             DispatchQueue.main.async {
-                if self.compareVersions(latest, current) == .orderedDescending {
-                    let alert = NSAlert()
-                    alert.messageText = self.text("Доступна версия \(latest)", "Version \(latest) is available")
-                    alert.informativeText = self.text("Установлена версия \(current).", "Installed version: \(current).")
+                guard self.compareVersions(latest, current) == .orderedDescending else {
+                    self.alert(
+                        self.text("Обновление не требуется", "No update available"),
+                        self.text("Установлена актуальная версия \(current).", "Version \(current) is up to date.")
+                    )
+                    return
+                }
+
+                let alert = NSAlert()
+                alert.messageText = self.text("Доступна версия \(latest)", "Version \(latest) is available")
+                if package != nil {
+                    alert.informativeText = self.text(
+                        "Установлена версия \(current). Пакет будет скачан и открыт в стандартном установщике macOS.",
+                        "Installed version: \(current). The package will be downloaded and opened in the standard macOS Installer."
+                    )
+                    alert.addButton(withTitle: self.text("Установить обновление", "Install update"))
+                } else {
+                    alert.informativeText = self.text(
+                        "Установлена версия \(current), но в релизе не найден установочный пакет.",
+                        "Installed version: \(current), but the release does not contain an installer package."
+                    )
                     alert.addButton(withTitle: self.text("Открыть релиз", "Open release"))
-                    alert.addButton(withTitle: self.text("Позже", "Later"))
-                    if alert.runModal() == .alertFirstButtonReturn,
-                       let releaseURL = URL(string: "https://github.com/bulava92/magsafe-dark/releases/latest") {
+                }
+                alert.addButton(withTitle: self.text("Открыть описание", "Open release notes"))
+                alert.addButton(withTitle: self.text("Позже", "Later"))
+
+                switch alert.runModal() {
+                case .alertFirstButtonReturn:
+                    if let package {
+                        self.downloadAndOpenUpdate(packageURL: package.url, filename: package.name, version: latest)
+                    } else if let releaseURL {
                         NSWorkspace.shared.open(releaseURL)
                     }
-                } else {
-                    self.alert(self.text("Обновление не требуется", "No update available"), self.text("Установлена актуальная версия \(current).", "Version \(current) is up to date."))
+                case .alertSecondButtonReturn:
+                    if let releaseURL { NSWorkspace.shared.open(releaseURL) }
+                default:
+                    break
+                }
+            }
+        }.resume()
+    }
+
+    private func downloadAndOpenUpdate(packageURL: URL, filename: String, version: String) {
+        var request = URLRequest(url: packageURL)
+        request.setValue("MagSafeDark/\(version)", forHTTPHeaderField: "User-Agent")
+
+        URLSession.shared.downloadTask(with: request) { [weak self] temporaryURL, response, error in
+            guard let self else { return }
+            if let error {
+                DispatchQueue.main.async {
+                    self.alert(self.text("Не удалось скачать обновление", "Could not download update"), error.localizedDescription)
+                }
+                return
+            }
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let temporaryURL else {
+                DispatchQueue.main.async {
+                    self.alert(
+                        self.text("Не удалось скачать обновление", "Could not download update"),
+                        self.text("Сервер вернул некорректный ответ.", "The server returned an invalid response.")
+                    )
+                }
+                return
+            }
+
+            do {
+                let safeFilename = URL(fileURLWithPath: filename).lastPathComponent
+                guard safeFilename.lowercased().hasSuffix(".pkg") else {
+                    throw NSError(
+                        domain: "MagSafeDark.Update",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: self.text("Файл обновления не является пакетом .pkg.", "The update file is not a .pkg package.")]
+                    )
+                }
+
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("MagSafe Dark Updates", isDirectory: true)
+                    .appendingPathComponent(version, isDirectory: true)
+                try? FileManager.default.removeItem(at: directory)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let destination = directory.appendingPathComponent(safeFilename)
+                try FileManager.default.moveItem(at: temporaryURL, to: destination)
+
+                let values = try destination.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else {
+                    throw NSError(
+                        domain: "MagSafeDark.Update",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: self.text("Загруженный пакет пуст или повреждён.", "The downloaded package is empty or damaged.")]
+                    )
+                }
+
+                DispatchQueue.main.async {
+                    if !NSWorkspace.shared.open(destination) {
+                        self.alert(
+                            self.text("Не удалось открыть установщик", "Could not open Installer"),
+                            self.text("Пакет сохранён: \(destination.path)", "The package was saved at: \(destination.path)")
+                        )
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.alert(self.text("Не удалось подготовить обновление", "Could not prepare update"), error.localizedDescription)
                 }
             }
         }.resume()
