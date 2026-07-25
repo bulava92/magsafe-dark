@@ -227,3 +227,5 @@ When a new version is available, the update dialog can download the `.pkg` direc
           git add -A
           git commit -m "Add in-app package update installation"
           git push
+
+# Triggered after the workflow exists on the default branch.
