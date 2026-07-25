@@ -2,6 +2,8 @@
 
 [Русская версия](README_RU.md)
 
+[Support the project](https://boosty.to/smd.monster/donate)
+
 MagSafe Dark is a macOS menu-bar app for controlling the LED on a MagSafe connector.
 
 It can turn the LED off, return control to macOS, show green or orange, run temporary effects, follow a weekly schedule, and display the state of Codex CLI tasks.
@@ -27,23 +29,48 @@ supported
 
 ## Main features
 
-- Turn the MagSafe LED off.
-- Return the LED to normal macOS control.
-- Show green, orange, a single indication, or one of several blinking effects.
+- Turn the MagSafe LED off or return it to normal macOS control.
+- Show green, orange, a single indication, or blinking effects.
 - Start a temporary mode for a selected duration.
 - Create a weekly schedule for different times and days.
 - Use separate LED modes for Codex work, success, and error states.
+- React to charger connection and disconnection through native IOKit power-source notifications.
+- Show battery percentage, charging state, and estimated charge completion in the menu bar.
+- Choose a battery or lightbulb status glyph.
 - Start automatically when you sign in.
 - View diagnostics and logs from the app menu.
 
 ## Installation
 
-Version 1.4.1 is currently installed from source:
+### Installer package
+
+Build and validate a local unsigned package:
+
+```bash
+zsh ./scripts/check-release.sh --package
+open build
+```
+
+The package is written to:
+
+```text
+build/MagSafeDark-<version>-unsigned.pkg
+```
+
+### Installation from source
 
 ```bash
 git clone https://github.com/bulava92/magsafe-dark.git
 cd magsafe-dark
-git checkout develop-1.4.1
+zsh ./scripts/check-release.sh
+zsh ./install.sh
+```
+
+For an existing checkout:
+
+```bash
+cd ~/Projects/magsafe-dark
+git pull
 zsh ./scripts/check-release.sh
 zsh ./install.sh
 ```
@@ -58,16 +85,15 @@ The app is installed as:
 
 ## Using the menu-bar app
 
-Open **MagSafe Dark** from Applications. Its icon appears in the macOS menu bar.
-
-From the menu you can:
+Open **MagSafe Dark** from Applications. From the menu you can:
 
 - choose an LED mode;
 - start or cancel a timer;
 - configure the weekly schedule;
 - configure Codex indication;
 - enable launch at login;
-- change the menu-bar icon style;
+- choose the menu-bar status glyph and icon style;
+- show battery percentage, charging state, and charge completion;
 - open diagnostics and logs;
 - check for updates.
 
@@ -93,72 +119,36 @@ Keyboard shortcuts while the menu is open:
 
 ## Timers
 
-A timer temporarily overrides the normal LED state.
+A timer temporarily overrides the normal LED state. When it ends, MagSafe Dark recalculates the state that should be active at that moment instead of restoring a potentially outdated value.
 
-Example: turn the LED off for 30 minutes. When the timer ends, MagSafe Dark recalculates what should be active at that moment. It does not blindly restore an outdated previous value.
-
-This matters when a schedule changes during the timer. For example:
-
-```text
-22:50  Green timer starts for 30 minutes
-23:00  Night schedule becomes active
-23:20  Timer ends
-23:20  Night schedule is applied
+```bash
+magsafe-dark for 900 off
+magsafe-dark timer-status
+magsafe-dark cancel-timer
 ```
 
 ## Weekly schedule
 
-Open **Configure Schedule…** from the app menu.
+Open **Configure Schedule…** from the app menu. Each interval can contain one or more weekdays, a start time, an end time, and an LED mode. Intervals may cross midnight.
 
-For each interval you can choose:
-
-- one or more days of the week;
-- start time;
-- end time;
-- LED mode.
-
-Intervals may cross midnight. For example, `23:00–08:00` starts in the evening and ends the next morning.
-
-The default template is:
+The default disabled template is:
 
 ```text
 Every day  08:00–23:00  System
 Every day  23:00–08:00  Off
 ```
 
-The template is disabled until you enable the schedule and save it.
+When the schedule is enabled, its current mode is applied immediately. A user timer or active Codex indication is allowed to finish first. Manual selection while a schedule is active remains in effect until the next schedule boundary.
 
-You can also choose what happens outside configured intervals:
-
-- use normal macOS control;
-- keep the LED off;
-- use the last persistent manual mode.
-
-When the schedule is enabled, its current mode is applied immediately. An already active timer or Codex indication is allowed to finish first.
-
-### Manual control while a schedule is enabled
-
-Choosing a mode manually creates a temporary override until the next schedule boundary.
-
-Example:
-
-```text
-21:00  Manual Green selected
-23:00  Next schedule interval starts
-23:00  Schedule regains control
-```
-
-When the schedule is disabled, a manually selected mode remains active until changed again.
+Power-source changes are observed through IOKit. When external power appears and the schedule is enabled, the current schedule is applied immediately and repeated after a short delay as a safeguard.
 
 ## Codex CLI indication
 
-MagSafe Dark can use the MagSafe LED to show Codex CLI state:
+MagSafe Dark can show Codex CLI state through the MagSafe LED:
 
 - working;
 - success;
 - error.
-
-Each state has its own LED mode. Success and error can also have separate durations and notifications.
 
 Use Codex through the wrapper:
 
@@ -167,11 +157,9 @@ codex-led
 codex-led exec "Fix the failing tests"
 ```
 
-Several Codex tasks may run at the same time. The working indication remains active while at least one task is still running. Final indication is shown after the last active task finishes.
+Several Codex tasks may run at the same time. The working indication remains active while at least one task is running.
 
-## How schedule, Codex, timers, and manual control interact
-
-MagSafe Dark uses this priority order:
+## Priority order
 
 ```text
 1. User timer
@@ -181,14 +169,6 @@ MagSafe Dark uses this priority order:
 5. Persistent manual mode
 6. Normal macOS control
 ```
-
-Examples:
-
-- A user timer is not interrupted by Codex.
-- Codex temporarily overrides the schedule.
-- After Codex finishes, the current schedule is recalculated.
-- A manual selection during an active schedule lasts until the next schedule change.
-- Enabling the schedule clears an old manual schedule override and applies the current interval immediately.
 
 ## Command-line use
 
@@ -203,14 +183,6 @@ magsafe-dark flash
 magsafe-dark blink-slow
 magsafe-dark blink-fast
 magsafe-dark blink-off
-```
-
-Timers:
-
-```bash
-magsafe-dark for 900 off
-magsafe-dark timer-status
-magsafe-dark cancel-timer
 ```
 
 Schedule:
@@ -235,8 +207,6 @@ The wrapped command keeps its original exit code.
 
 ## Diagnostics
 
-Useful commands:
-
 ```bash
 magsafe-dark status
 magsafe-dark settings
@@ -245,21 +215,12 @@ magsafe-dark diagnostics
 magsafe-dark log-path
 ```
 
-The app menu also provides access to diagnostics and logs.
-
 ## Troubleshooting
 
-### The LED does not change
-
-Check compatibility:
+Check compatibility and the background service:
 
 ```bash
 magsafe-dark probe
-```
-
-Check the background service:
-
-```bash
 /usr/local/libexec/magsafe-led-client ping
 /usr/local/libexec/magsafe-led-client status
 ```
@@ -270,27 +231,9 @@ Expected ping result:
 pong
 ```
 
-### The schedule does not apply
-
-Check its state:
-
-```bash
-magsafe-dark schedule status
-```
-
-An active timer or Codex indication has higher priority than the schedule. The schedule will apply when that temporary state finishes.
-
-### The schedule editor does not open
-
-Run it from Terminal to see the error directly:
-
-```bash
-magsafe-dark schedule edit
-```
+An active timer or Codex indication has higher priority than the schedule. Run `magsafe-dark schedule status` when the schedule does not appear to apply.
 
 ## Uninstall
-
-From the project folder:
 
 ```bash
 zsh ./uninstall.sh
@@ -300,10 +243,8 @@ This returns the LED to normal macOS control and removes MagSafe Dark, its backg
 
 ## Privacy and security
 
-MagSafe Dark works locally. The privileged background service accepts only a fixed set of LED commands and does not execute arbitrary shell commands.
-
-Normal app and CLI use does not require `sudo` after installation.
+MagSafe Dark works locally. The privileged background service accepts only a fixed set of LED commands and does not execute arbitrary shell commands. Normal app and CLI use does not require `sudo` after installation.
 
 ## License
 
-MIT
+[MIT](LICENSE)
