@@ -10,7 +10,7 @@
 
 MagSafe Dark is a macOS menu bar app for controlling the LED on a MagSafe connector.
 
-> The app uses the undocumented Apple SMC key `ACLC`. A macOS or firmware update may change or completely disable this behavior.
+> The app uses an undocumented macOS mechanism. A system or firmware update may change or completely disable this behavior.
 
 ## Requirements
 
@@ -36,10 +36,10 @@ supported
 - temporary modes;
 - weekly schedules;
 - Codex CLI working, success, and error indication;
-- automatic schedule application after power-source changes;
+- automatic recovery of the current mode after power changes;
 - optional battery, charging, and charge-completion information in the menu bar;
 - diagnostics, logs, CLI, and update checks;
-- `.pkg` building, Developer ID signing, and notarization.
+- installer package building, signing, and notarization.
 
 ## Installation
 
@@ -101,9 +101,7 @@ Keyboard shortcuts while the menu is open:
 
 ## Power and charging
 
-The app subscribes to native IOKit power-source notifications. Connecting or disconnecting the charger updates the state immediately.
-
-When external power is connected and the schedule is enabled, MagSafe Dark runs `schedule apply` immediately and repeats it about three seconds later. The delayed pass protects against cases where the MagSafe or power state has not fully stabilized yet.
+Connecting or disconnecting the charger updates the app state immediately. When a schedule is enabled, MagSafe Dark also verifies and restores the correct mode after the power state stabilizes.
 
 The menu bar can optionally show:
 
@@ -140,9 +138,9 @@ Outside configured intervals, the app can use:
 
 ### Manual control while a schedule is active
 
-Selecting a mode manually while the schedule is enabled creates an override that lasts until the next schedule boundary. The schedule then regains control.
+Selecting a mode manually while the schedule is enabled keeps it active until the next schedule boundary. The schedule then regains control.
 
-When the schedule is disabled, a manually selected mode is persistent until the user changes it again.
+When the schedule is disabled, a manually selected mode remains active until the user changes it again.
 
 ## Codex CLI indication
 
@@ -168,7 +166,7 @@ When several tasks run simultaneously, the working indication remains active unt
 ```text
 1. User timer
 2. Active Codex indication
-3. Manual override until the next schedule boundary
+3. Manual mode until the next schedule boundary
 4. Current schedule interval
 5. Persistent manual mode
 6. Normal macOS control
@@ -180,7 +178,7 @@ After a temporary state finishes, the app recalculates the current desired mode.
 - Codex temporarily overrides the schedule;
 - the current schedule interval is restored after Codex;
 - a manual selection during an active schedule lasts only until the next boundary;
-- connecting power reapplies the current schedule.
+- the correct mode is restored after a power change.
 
 ## Menu bar status
 
@@ -217,7 +215,6 @@ magsafe-dark schedule status
 magsafe-dark schedule enable
 magsafe-dark schedule disable
 magsafe-dark schedule next
-magsafe-dark schedule apply
 ```
 
 Run another command with LED indication:
@@ -244,19 +241,23 @@ magsafe-dark log-path
 
 ### The LED does not change
 
+Check compatibility:
+
 ```bash
 magsafe-dark probe
-/usr/local/libexec/magsafe-led-client ping
-/usr/local/libexec/magsafe-led-client status
 ```
 
-The expected ping response is `pong`.
+Then open diagnostics and logs from the app menu or run:
+
+```bash
+magsafe-dark diagnostics
+magsafe-dark log-path
+```
 
 ### The schedule does not apply
 
 ```bash
 magsafe-dark schedule status
-magsafe-dark schedule apply
 ```
 
 A timer or active Codex indication has higher priority. The schedule applies after the temporary state finishes.
@@ -271,15 +272,11 @@ Running it from Terminal exposes the error message directly.
 
 ## Signing and notarization
 
-`build-pkg.sh` creates an unsigned installer package. `scripts/sign-and-notarize.sh` signs the app and package with Developer ID certificates, submits the package to Apple notarization, and staples the ticket.
+The repository includes scripts for building, signing, and notarizing the installer package. Detailed parameters are documented in the signing guide.
 
-Certificate identities and the notarization profile are supplied through environment variables; see the script and repository signing documentation for details.
+## Limitations
 
-## Limitations and security
-
-MagSafe Dark works locally. The privileged background service accepts only a fixed set of LED commands and does not execute arbitrary shell commands.
-
-`ACLC` is not a public Apple API. Compatibility may change after a macOS update, firmware update, or a new MacBook generation even when installation is otherwise correct.
+MagSafe Dark works locally. Because LED control relies on an undocumented Apple mechanism, compatibility may change after a macOS update, firmware update, or a new MacBook generation.
 
 ## Uninstall
 
@@ -287,7 +284,7 @@ MagSafe Dark works locally. The privileged background service accepts only a fix
 zsh ./uninstall.sh
 ```
 
-The script restores normal macOS LED control and removes the app, services, schedule, settings, and logs.
+The script restores normal macOS LED control and removes the app, its settings, and logs.
 
 ## License
 
