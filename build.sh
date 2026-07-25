@@ -3,6 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+UPDATER_SCRIPT="scripts/apply-in-app-update.py"
+if [[ -f "$UPDATER_SCRIPT" ]]; then
+  UPDATER_BACKUP="$(mktemp)"
+  cp "$UPDATER_SCRIPT" "$UPDATER_BACKUP"
+  python3 "$UPDATER_BACKUP"
+  cp "$UPDATER_BACKUP" "$UPDATER_SCRIPT"
+  rm -f "$UPDATER_BACKUP"
+fi
+
 EXECUTABLE_NAME="MagSafeDark"
 APP_DISPLAY_NAME="MagSafe Dark"
 APP_DIR="build/${APP_DISPLAY_NAME}.app"
