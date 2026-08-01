@@ -1268,13 +1268,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = text("Скрыть значок в строке меню?", "Hide menu bar icon?")
         alert.informativeText = text(
-            "Интерфейс MagSafe Dark закроется, но фоновые службы и расписание продолжат работать. Чтобы вернуть значок, снова запустите MagSafe Dark из папки «Программы».",
-            "The MagSafe Dark interface will close, but background services and schedules will continue working. Launch MagSafe Dark again from Applications to restore the icon."
+            "Интерфейс MagSafe Dark закроется, а его автозапуск будет отключён. Фоновые службы и расписание продолжат работать. Чтобы вернуть значок, снова запустите MagSafe Dark из папки «Программы».",
+            "The MagSafe Dark interface will close and its launch-at-login setting will be disabled. Background services and schedules will continue working. Launch MagSafe Dark again from Applications to restore the icon."
         )
         alert.addButton(withTitle: text("Скрыть", "Hide"))
         alert.addButton(withTitle: text("Отмена", "Cancel"))
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            if launchAtLoginEnabled {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            self.alert(
+                text("Не удалось отключить автозапуск", "Could not disable launch at login"),
+                error.localizedDescription
+            )
+            return
+        }
         NSApp.terminate(nil)
     }
 

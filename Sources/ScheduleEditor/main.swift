@@ -7,6 +7,8 @@ private let supportURL = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/MagSafe Dark/Schedule", isDirectory: true)
 private let scheduleURL = supportURL.appendingPathComponent("schedule.json")
 private let schedulerPath = "/usr/local/libexec/magsafe-scheduler"
+private let editorLockURL = supportURL.appendingPathComponent("schedule-editor.lock")
+private let editorActivationNotification = Notification.Name("su.xyz.MagSafeDark.schedule-editor.activate")
 
 private let modeItems: [(String, LEDMode)] = [
     ("Штатный режим", .system),
@@ -61,6 +63,8 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
     private var schedule: LEDSchedule
     private var selectedRuleIndex: Int?
     private var isChangingSelection = false
+    private var editorLockFileDescriptor: Int32 = -1
+    private var activationObserver: NSObjectProtocol?
 
     private let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 860, height: 540),
@@ -85,10 +89,17 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard acquireEditorLock() else { return }
+        activationObserver = DistributedNotificationCenter.default().addObserver(
+            forName: editorActivationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.bringWindowToFront()
+        }
         buildUI()
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        bringWindowToFront()
         if !schedule.rules.isEmpty {
             selectRule(at: 0)
         } else {
@@ -96,7 +107,47 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        if let activationObserver {
+            DistributedNotificationCenter.default().removeObserver(activationObserver)
+        }
+        if editorLockFileDescriptor >= 0 {
+            Darwin.close(editorLockFileDescriptor)
+            editorLockFileDescriptor = -1
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private func acquireEditorLock() -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
+        } catch {
+            return true
+        }
+
+        let descriptor = Darwin.open(editorLockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { return true }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor)
+            DistributedNotificationCenter.default().postNotificationName(
+                editorActivationNotification,
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+            NSApp.terminate(nil)
+            return false
+        }
+        editorLockFileDescriptor = descriptor
+        return true
+    }
+
+    private func bringWindowToFront() {
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     private func buildUI() {
         window.title = "Расписание MagSafe Dark"
