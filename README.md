@@ -227,6 +227,10 @@ magsafe-dark run --success green --error blink-fast -- ./deploy.sh
 
 The wrapped command keeps its original exit code.
 
+## In-app updates
+
+When a new version is available, the update dialog can download the `.pkg` directly from the GitHub Release. The package is then opened in the standard macOS Installer. Until packages are signed with Developer ID, macOS may show an additional security warning and require manual confirmation.
+
 ## Diagnostics
 
 ```bash

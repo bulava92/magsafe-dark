@@ -67,8 +67,8 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
     private var activationObserver: NSObjectProtocol?
 
     private let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 860, height: 540),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable],
+        contentRect: NSRect(x: 0, y: 0, width: 900, height: 440),
+        styleMask: [.titled, .closable, .miniaturizable],
         backing: .buffered,
         defer: false
     )
@@ -151,11 +151,8 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
 
     private func buildUI() {
         window.title = "Расписание MagSafe Dark"
-        window.minSize = NSSize(width: 760, height: 500)
-        window.setFrameAutosaveName("MagSafeDarkScheduleEditorWindow")
 
         let root = NSView()
-        root.translatesAutoresizingMaskIntoConstraints = false
         window.contentView = root
 
         let title = NSTextField(labelWithString: "Расписание индикатора")
@@ -197,11 +194,12 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = 14
+        header.setContentHuggingPriority(.required, for: .vertical)
 
         table.headerView = nil
         table.allowsEmptySelection = false
         table.allowsMultipleSelection = false
-        table.rowHeight = 52
+        table.rowHeight = 50
         table.intercellSpacing = NSSize(width: 0, height: 2)
         table.selectionHighlightStyle = .regular
         table.delegate = self
@@ -292,8 +290,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
             mainStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22),
             mainStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 22),
             mainStack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
-            contentRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 330),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 280)
+            scroll.heightAnchor.constraint(equalToConstant: 170)
         ])
     }
 
@@ -331,7 +328,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         timeRow.orientation = .horizontal
         timeRow.alignment = .top
         timeRow.spacing = 18
-        timeRow.distribution = .fillEqually
+        timeRow.distribution = .gravityAreas
 
         modePopup.addItems(withTitles: modeItems.map(\.0))
         modePopup.target = self
@@ -342,7 +339,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         hint.textColor = .secondaryLabelColor
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
 
-        let stack = NSStackView(views: [sectionTitle, ruleEnabled, daysLabel, daysRow, timeRow, modeGroup, hint, NSView()])
+        let stack = NSStackView(views: [sectionTitle, ruleEnabled, daysLabel, daysRow, timeRow, modeGroup, hint])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -350,15 +347,14 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         container.addSubview(stack)
 
         daysRow.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
-        timeRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        modeGroup.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         hint.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        modePopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor)
         ])
 
         return container
@@ -375,7 +371,6 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
-        control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 
@@ -384,6 +379,7 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         picker.datePickerStyle = .textFieldAndStepper
         picker.target = self
         picker.action = #selector(updateSelectedRule)
+        picker.widthAnchor.constraint(equalToConstant: 150).isActive = true
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { schedule.rules.count }
@@ -418,18 +414,21 @@ final class EditorController: NSObject, NSApplicationDelegate, NSTableViewDataSo
         subtitle.tag = 1001
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
+        let labels = NSStackView(views: [title, subtitle])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 3
+        labels.translatesAutoresizingMaskIntoConstraints = false
+
         cell.textField = title
-        cell.addSubview(title)
-        cell.addSubview(subtitle)
+        cell.addSubview(labels)
 
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-            title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-            title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 7),
-            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            subtitle.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
-            subtitle.bottomAnchor.constraint(lessThanOrEqualTo: cell.bottomAnchor, constant: -6)
+            labels.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            labels.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            labels.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            title.trailingAnchor.constraint(equalTo: labels.trailingAnchor),
+            subtitle.trailingAnchor.constraint(equalTo: labels.trailingAnchor)
         ])
         return cell
     }
