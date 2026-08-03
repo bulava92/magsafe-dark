@@ -72,7 +72,7 @@ if old_title in text:
 # Add a quick schedule switch above the settings submenu.
 schedule_anchor = '        menu.addItem(submenu(text("Настройки", "Settings"), settings))\n'
 if '#selector(toggleSchedule)' not in text and schedule_anchor in text:
-    schedule_item = '''        let scheduleToggle = item(text("Расписание включено", "Schedule enabled"), #selector(toggleSchedule))
+    schedule_item = '''        let scheduleToggle = item(text("Использовать расписание", "Use schedule"), #selector(toggleSchedule))
         scheduleToggle.state = scheduleEnabled ? .on : .off
         menu.addItem(scheduleToggle)
 '''

@@ -406,7 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.addItem(.separator())
         settings.addItem(item(text("Скрыть значок в строке меню…", "Hide menu bar icon…"), #selector(hideMenuBarIcon)))
 
-        let scheduleToggle = item(text("Расписание включено", "Schedule enabled"), #selector(toggleSchedule))
+        let scheduleToggle = item(text("Использовать расписание", "Use schedule"), #selector(toggleSchedule))
         scheduleToggle.state = scheduleEnabled ? .on : .off
         menu.addItem(scheduleToggle)
         menu.addItem(submenu(text("Настройки", "Settings"), settings))

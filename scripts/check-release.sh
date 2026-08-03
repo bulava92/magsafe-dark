@@ -106,7 +106,7 @@ grep -q 'Вернуть штатный режим' Sources/MagSafeDark/main.swif
 grep -q 'Выключить индикатор' Sources/MagSafeDark/main.swift
 grep -q 'Отменить ручное управление' Sources/MagSafeDark/main.swift
 grep -q 'Показывать подключение к питанию' Sources/MagSafeDark/main.swift
-grep -q 'Расписание включено' Sources/MagSafeDark/main.swift
+grep -q 'Использовать расписание' Sources/MagSafeDark/main.swift
 grep -q 'result.state = expectedValue(for: mode) == cachedMode' Sources/MagSafeDark/main.swift
 grep -q 'ruleIsActiveNow' Sources/ScheduleEditor/main.swift
 grep -q 'сохранять последний режим' Sources/ScheduleEditor/main.swift
